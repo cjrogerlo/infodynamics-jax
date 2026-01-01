@@ -1,24 +1,25 @@
-from typing import Protocol, Dict
-import jax.numpy as jnp
+# infodynamics_jax/likelihoods/base.py
 
-class Likelihood(Protocol):
+_LIKELIHOOD_REGISTRY = {}
+
+
+def register(name, likelihood):
     """
-    Likelihood interface.
+    Register a likelihood object or factory under a string key.
     """
+    if name in _LIKELIHOOD_REGISTRY:
+        raise KeyError(f"Likelihood '{name}' already registered.")
+    _LIKELIHOOD_REGISTRY[name] = likelihood
 
-    def log_prob(
-        self,
-        y: jnp.ndarray,
-        f: jnp.ndarray,
-        params: Dict,
-    ) -> jnp.ndarray:
-        """
-        Return log p(y | f, params).
 
-        Shapes:
-          y: (..., N)
-          f: (..., N)
-        Returns:
-          log_prob: (..., N)
-        """
-        ...
+def get(name):
+    """
+    Retrieve a likelihood by name.
+    """
+    try:
+        return _LIKELIHOOD_REGISTRY[name]
+    except KeyError:
+        raise KeyError(
+            f"Unknown likelihood '{name}'. "
+            f"Available: {list(_LIKELIHOOD_REGISTRY.keys())}"
+        )
