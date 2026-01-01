@@ -138,7 +138,7 @@ class InertialEnergy:
         with mu=0, var=K_ff(phi).
         """
         # full GP prior covariance
-        Kff = self.kernel_fn(X, X, phi.theta)
+        Kff = self.kernel_fn(X, X, phi.kernel_params)
         Kff = 0.5 * (Kff + Kff.T)
 
         var = jnp.diag(Kff)

@@ -63,12 +63,12 @@ def qfi_from_qu_full(phi, X: jnp.ndarray, kernel_fn: Callable, m_u: jnp.ndarray,
     - var_f: (N,D)
     """
     Z = phi.Z
-    Kuu = kernel_fn(Z, Z, phi.theta)
+    Kuu = kernel_fn(Z, Z, phi.kernel_params)
     Kuu = 0.5 * (Kuu + Kuu.T) + phi.jitter * jnp.eye(Kuu.shape[0], dtype=Kuu.dtype)
     L = jnp.linalg.cholesky(Kuu)
 
-    Kxu = kernel_fn(X, Z, phi.theta)          # (N,M)
-    Kxx_diag = jnp.diag(kernel_fn(X, X, phi.theta))  # (N,)
+    Kxu = kernel_fn(X, Z, phi.kernel_params)          # (N,M)
+    Kxx_diag = jnp.diag(kernel_fn(X, X, phi.kernel_params))  # (N,)
 
     # Solve for A = Kxu Kuu^{-1} = (solve(Kuu, Kux))^T but stably via chol
     # We need a_i row-wise. Compute V = L^{-1} Kux = L^{-1} Kxu^T => (M,N)
