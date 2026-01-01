@@ -4,8 +4,7 @@ import jax.numpy as jnp
 from dataclasses import dataclass
 
 # -----------------------------------------------------------------------------
-# Precomputed Gauss–Hermite (physicists') nodes and weights
-# GH-20 is a standard, widely used choice in GP literature.
+# Precomputed Gauss–Hermite (physicists') nodes and weights (GH-20)
 # -----------------------------------------------------------------------------
 
 _GH20_X = jnp.array([
@@ -60,22 +59,40 @@ class GaussHermite:
     """
     Deterministic Gauss–Hermite quadrature helper.
 
-    This object provides nodes and weights for expectations of the form:
-
-        E_{N(0,1)}[f(z)] ≈ sum_i w_i f(x_i)
-
-    Notes
-    -----
-    * Only GH-20 is provided (by design).
-    * Nodes/weights are constants -> JIT-safe.
-    * Scaling to N(mu, sigma^2) is handled outside.
+    Provides expectations of the form:
+        E_{N(mu, var)}[ -log p(y | f, phi) ]
     """
     n: int = 20
 
     def nodes_weights(self):
         if self.n != 20:
             raise NotImplementedError(
-                "Only GH-20 is supported. "
-                "If you need another order, add a precomputed table."
+                "Only GH-20 is supported. Add more tables if needed."
             )
         return _GH20_X, _GH20_W
+
+    def expect_nll_1d(self, y, mu, var, phi, nll_1d_fn):
+        """
+        Compute 1D expectation:
+            E_{f ~ N(mu, var)}[ -log p(y | f, phi) ]
+
+        Parameters
+        ----------
+        y : scalar
+        mu : scalar
+        var : scalar (>= 0)
+        phi : Phi
+        nll_1d_fn : callable
+            Signature: nll_1d_fn(y, f, phi) -> scalar
+        """
+        x, w = self.nodes_weights()
+
+        # Transform GH nodes to N(mu, var)
+        f = mu + jnp.sqrt(var) * jnp.sqrt(2.0) * x
+
+        # Evaluate negative log-likelihood
+        vals = nll_1d_fn(y, f, phi)
+
+        # GH expectation formula
+        return jnp.sum(w * vals) / jnp.sqrt(jnp.pi)
+
