@@ -1,10 +1,16 @@
 import jax.numpy as jnp
+import jax.nn as jnn
 
-def log_prob(y, f, params=None):
+class BernoulliLikelihood:
     """
     Bernoulli likelihood with logistic link:
-      p(y=1|f) = sigmoid(f)
-
-    params: unused (kept for uniform API)
+        p(y | f) = Bernoulli(sigmoid(f))
     """
-    return y * f - jnp.log1p(jnp.exp(f))
+
+    @staticmethod
+    def neg_loglik_1d(y, f, phi_like=None):
+        """
+        y in {0,1}
+        """
+        # Stable binary cross entropy
+        return jnn.softplus(f) - y * f

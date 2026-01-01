@@ -1,15 +1,21 @@
 import jax.numpy as jnp
 
-def log_prob(y, f, params):
+class GaussianLikelihood:
     """
     Gaussian likelihood:
-      y | f ~ N(f, sigma^2)
-
-    params:
-      noise_var: scalar
+        p(y | f, phi) = N(y; f, sigma^2)
     """
-    sigma2 = params["noise_var"]
-    return (
-        -0.5 * jnp.log(2.0 * jnp.pi * sigma2)
-        -0.5 * (y - f) ** 2 / sigma2
-    )
+
+    @staticmethod
+    def neg_loglik_1d(y, f, phi_like):
+        """
+        Negative log-likelihood for one scalar observation.
+
+        phi_like:
+            {"noise_var": sigma^2}
+        """
+        sigma2 = phi_like["noise_var"]
+        return 0.5 * (
+            jnp.log(2.0 * jnp.pi * sigma2)
+            + (y - f) ** 2 / sigma2
+        )

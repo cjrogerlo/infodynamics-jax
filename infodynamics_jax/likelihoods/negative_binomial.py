@@ -1,20 +1,27 @@
 import jax.numpy as jnp
+import jax.nn as jnn
 
-def log_prob(y, f, params):
+class NegativeBinomialLikelihood:
     """
-    Negative Binomial with log-mean parameterisation.
+    Negative Binomial likelihood with log-mean parameterisation.
 
-    params:
-      r: dispersion (>0)
+    mean = exp(f)
+    dispersion = r
     """
-    r = params["r"]
-    mu = jnp.exp(f)
 
-    return (
-        jnp.lgamma(y + r)
-        - jnp.lgamma(r)
-        - jnp.lgamma(y + 1)
-        + r * jnp.log(r)
-        + y * jnp.log(mu)
-        - (y + r) * jnp.log(mu + r)
-    )
+    @staticmethod
+    def neg_loglik_1d(y, f, phi_like):
+        """
+        phi_like:
+            {"dispersion": r}
+        """
+        r = phi_like["dispersion"]
+        mu = jnp.exp(f)
+
+        return (
+            jnn.lgamma(y + r)
+            - jnn.lgamma(r)
+            - jnn.lgamma(y + 1.0)
+            + r * jnp.log(r / (r + mu))
+            + y * jnp.log(mu / (r + mu))
+        ) * (-1.0)
