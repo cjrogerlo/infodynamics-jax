@@ -15,31 +15,7 @@ Estimator = Literal["gh", "mc"]
 
 import jax.numpy as jnp
 from jax.tree_util import register_pytree_node_class
-
-@register_pytree_node_class
-@dataclass
-class VariationalState:
-    m_u: jnp.ndarray
-    L_u: jnp.ndarray | None = None
-    s_u_diag: jnp.ndarray | None = None
-    cov_type: str = "full"   # static
-
-    def tree_flatten(self):
-        # ONLY numerical parameters go into children
-        children = (self.m_u, self.L_u, self.s_u_diag)
-        aux_data = self.cov_type
-        return children, aux_data
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        m_u, L_u, s_u_diag = children
-        return cls(
-            m_u=m_u,
-            L_u=L_u,
-            s_u_diag=s_u_diag,
-            cov_type=aux_data,
-        )
-
+from .state import VariationalState
 
 def _as_2d(Y: jnp.ndarray) -> jnp.ndarray:
     return Y[:, None] if Y.ndim == 1 else Y
@@ -170,3 +146,4 @@ def expected_nll_factorised_mc(phi, X, Y, kernel_fn, state: VariationalState,
 
     vals = jax.vmap(nll_of_sample)(f_samps)  # (S,)
     return jnp.mean(vals)
+
