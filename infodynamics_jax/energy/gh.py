@@ -83,7 +83,7 @@ class GaussHermite:
         var : scalar (>= 0)
         phi : Phi
         nll_1d_fn : callable
-            Signature: nll_1d_fn(y, f, phi) -> scalar
+            Signature: nll_1d_fn(y, f, phi.likelihood_params) -> scalar
         """
         x, w = self.nodes_weights()
 
@@ -91,7 +91,7 @@ class GaussHermite:
         f = mu + jnp.sqrt(var) * jnp.sqrt(2.0) * x
 
         # Evaluate negative log-likelihood
-        vals = nll_1d_fn(y, f, phi)
+        vals = nll_1d_fn(y, f, phi.likelihood_params)
 
         # GH expectation formula
         return jnp.sum(w * vals) / jnp.sqrt(jnp.pi)
