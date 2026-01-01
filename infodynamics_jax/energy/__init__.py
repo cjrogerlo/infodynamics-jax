@@ -7,12 +7,13 @@ from .expected import (
     expected_nll_factorised_mc,
 )
 from .gh import GaussHermite
-
+from .object import InertialEnergy
 __all__ = [
-    "gaussian_expected_nll_1d",
+    "InertialEnergy",
     "VariationalState",
     "qfi_from_qu_full",
     "expected_nll_factorised_gh",
     "expected_nll_factorised_mc",
     "GaussHermite",
+    "gaussian_expected_nll_1d",
 ]
