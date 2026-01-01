@@ -16,4 +16,5 @@ def scaled_sqdist(X, Z, lengthscale):
     Zs = Z / ell
     x2 = jnp.sum(Xs * Xs, axis=-1, keepdims=True)
     z2 = jnp.sum(Zs * Zs, axis=-1, keepdims=True).T
-    return jnp.maximum(x2 + z2 - 2.0 * (Xs @ Zs.T), 0.0))
+    return jnp.maximum(x2 + z2 - 2.0 * (Xs @ Zs.T), 0.0)
+
