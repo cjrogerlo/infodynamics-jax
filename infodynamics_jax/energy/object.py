@@ -66,8 +66,7 @@ class InertialEnergy:
                     "Conjugate estimator requested, but likelihood is not Gaussian."
                 )
 
-        if self.estimator == "gh":
-            self.gh = GaussHermite(n=self.gh_order, dtype=self.gh_dtype)
+        if self.estimator == "gh": self.gh = GaussHermite(n=self.gh_order)
 
     # ------------------------------------------------------------------
     # public interface
