@@ -1,8 +1,15 @@
 import jax.numpy as jnp
 
-class GaussianLikelihood:
-    def __init__(self, noise_variance):
-        self.noise_variance = noise_variance
+def log_prob(y, f, params):
+    """
+    Gaussian likelihood:
+      y | f ~ N(f, sigma^2)
 
-    def log_prob(self, y, f):
-        return -0.5 * ((y-f)**2 / self.noise_variance + jnp.log(2*jnp.pi*self.noise_variance))
+    params:
+      noise_var: scalar
+    """
+    sigma2 = params["noise_var"]
+    return (
+        -0.5 * jnp.log(2.0 * jnp.pi * sigma2)
+        -0.5 * (y - f) ** 2 / sigma2
+    )
