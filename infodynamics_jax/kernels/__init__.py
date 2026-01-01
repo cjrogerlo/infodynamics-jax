@@ -10,6 +10,7 @@ from .periodic import periodic
 from .rational_quadratic import rational_quadratic
 from .white import white
 
+# register atomic kernels only
 register("rbf", rbf)
 register("matern12", matern12)
 register("matern32", matern32)
@@ -20,4 +21,12 @@ register("periodic", periodic)
 register("rq", rational_quadratic)
 register("white", white)
 
-__all__ = ["get"]
+# import composite constructors (DO NOT register)
+from .composite import sum_kernel, product_kernel, scale_kernel
+
+__all__ = [
+    "get",
+    "sum_kernel",
+    "product_kernel",
+    "scale_kernel",
+]

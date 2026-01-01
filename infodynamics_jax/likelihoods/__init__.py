@@ -1,5 +1,3 @@
-# infodynamics_jax/likelihoods/__init__.py
-
 from .base import register, get
 
 from .bernoulli import bernoulli
@@ -12,11 +10,4 @@ register("poisson", poisson)
 register("negative_binomial", negative_binomial)
 register("ordinal", ordinal)
 
-__all__ = [
-    "get",
-    "bernoulli",
-    "poisson",
-    "negative_binomial",
-    "ordinal",
-]
-
+__all__ = ["get"]
