@@ -136,7 +136,7 @@ def expected_nll_factorised_mc(phi, X, Y, kernel_fn, state: VariationalState,
     var_f = jnp.clip(var_f, a_min=0.0)
 
     N, D = Y.shape
-    eps = jax.random.normal(key, shape=(n_samples, N, D), dtype=Y.dtype)
+    eps = jax.random.normal(key, shape=(n_samples, N, D), dtype=mu_f.dtype)
     f_samps = mu_f[None, :, :] + jnp.sqrt(var_f[None, :, :]) * eps  # (S,N,D)
 
     # average over samples
