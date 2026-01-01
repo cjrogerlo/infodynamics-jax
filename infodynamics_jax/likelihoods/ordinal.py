@@ -30,3 +30,5 @@ class OrdinalLikelihood:
 
         prob = upper - lower
         return -jnp.log(prob + 1e-12)
+
+ordinal = OrdinalLikelihood()

@@ -25,3 +25,5 @@ class NegativeBinomialLikelihood:
             + r * jnp.log(r / (r + mu))
             + y * jnp.log(mu / (r + mu))
         ) * (-1.0)
+
+negative_binomial = NegativeBinomialLikelihood()

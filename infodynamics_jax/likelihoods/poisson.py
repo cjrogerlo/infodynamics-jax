@@ -14,3 +14,5 @@ class PoissonLikelihood:
         """
         rate = jnp.exp(f)
         return rate - y * f + jnn.lgamma(y + 1.0)
+
+poisson = PoissonLikelihood()

@@ -14,3 +14,5 @@ class BernoulliLikelihood:
         """
         # Stable binary cross entropy
         return jnn.softplus(f) - y * f
+
+bernoulli = BernoulliLikelihood()

@@ -19,3 +19,5 @@ class GaussianLikelihood:
             jnp.log(2.0 * jnp.pi * sigma2)
             + (y - f) ** 2 / sigma2
         )
+
+gaussian = GaussianLikelihood()
