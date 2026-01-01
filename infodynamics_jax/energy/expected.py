@@ -13,26 +13,32 @@ from .gh import GaussHermite
 Estimator = Literal["gh", "mc"]
 
 
-@dataclass(frozen=True)
+import jax.numpy as jnp
+from jax.tree_util import register_pytree_node_class
+
+@register_pytree_node_class
+@dataclass
 class VariationalState:
-    """
-    Variational Gaussian posterior over inducing variables:
-        q(u|phi) = N(m_u, S_u)
-
-    Parameterisation:
-    - full: S_u = L_u L_u^T (Cholesky factor)
-    - diag: S_u = diag(s_u_diag)
-
-    Shapes:
-    - m_u: (M, D)   (D outputs; D=1 allowed)
-    - L_u: (D, M, M) or (M, M) if D=1
-    - s_u_diag: (M, D) or (M,) if D=1
-    """
     m_u: jnp.ndarray
-    # exactly one of these should be used depending on cov_type
-    L_u: Optional[jnp.ndarray] = None
-    s_u_diag: Optional[jnp.ndarray] = None
-    cov_type: Literal["full", "diag"] = "full"
+    L_u: jnp.ndarray | None = None
+    s_u_diag: jnp.ndarray | None = None
+    cov_type: str = "full"   # static
+
+    def tree_flatten(self):
+        # ONLY numerical parameters go into children
+        children = (self.m_u, self.L_u, self.s_u_diag)
+        aux_data = self.cov_type
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        m_u, L_u, s_u_diag = children
+        return cls(
+            m_u=m_u,
+            L_u=L_u,
+            s_u_diag=s_u_diag,
+            cov_type=aux_data,
+        )
 
 
 def _as_2d(Y: jnp.ndarray) -> jnp.ndarray:

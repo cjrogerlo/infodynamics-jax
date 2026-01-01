@@ -1,9 +1,17 @@
-_REGISTRY = {}
+# infodynamics_jax/likelihoods/base.py
 
-def register(name, fn):
-    _REGISTRY[name] = fn
+_LIKELIHOOD_REGISTRY = {}
 
-def get(name):
-    if name not in _REGISTRY:
-        raise KeyError(f"Unknown kernel '{name}'.")
-    return _REGISTRY[name]
+def register(name: str, obj):
+    if name in _LIKELIHOOD_REGISTRY:
+        raise KeyError(f"Likelihood '{name}' already registered.")
+    _LIKELIHOOD_REGISTRY[name] = obj
+
+def get(name: str):
+    try:
+        return _LIKELIHOOD_REGISTRY[name]
+    except KeyError:
+        raise KeyError(
+            f"Unknown likelihood '{name}'. "
+            f"Available: {list(_LIKELIHOOD_REGISTRY.keys())}"
+        )
