@@ -1,53 +1,81 @@
 # infodynamics_jax/energy/gh.py
 from __future__ import annotations
-
-from dataclasses import dataclass
-import jax
 import jax.numpy as jnp
+from dataclasses import dataclass
+
+# -----------------------------------------------------------------------------
+# Precomputed Gauss–Hermite (physicists') nodes and weights
+# GH-20 is a standard, widely used choice in GP literature.
+# -----------------------------------------------------------------------------
+
+_GH20_X = jnp.array([
+    -5.387480890011232,
+    -4.603682449550744,
+    -3.944764040115625,
+    -3.347854567383216,
+    -2.788806058428130,
+    -2.254974002089275,
+    -1.738537712116586,
+    -1.234076215395323,
+    -0.737473728545394,
+    -0.245340708300901,
+     0.245340708300901,
+     0.737473728545394,
+     1.234076215395323,
+     1.738537712116586,
+     2.254974002089275,
+     2.788806058428130,
+     3.347854567383216,
+     3.944764040115625,
+     4.603682449550744,
+     5.387480890011232,
+])
+
+_GH20_W = jnp.array([
+    2.229393645534151e-13,
+    4.399340992273180e-10,
+    1.086069370769281e-07,
+    7.802556478532063e-06,
+    2.283386360163539e-04,
+    3.243773342237861e-03,
+    2.481052088746361e-02,
+    1.090172060200233e-01,
+    2.866755053628341e-01,
+    4.622436696006100e-01,
+    4.622436696006100e-01,
+    2.866755053628341e-01,
+    1.090172060200233e-01,
+    2.481052088746361e-02,
+    3.243773342237861e-03,
+    2.283386360163539e-04,
+    7.802556478532063e-06,
+    1.086069370769281e-07,
+    4.399340992273180e-10,
+    2.229393645534151e-13,
+])
 
 
 @dataclass(frozen=True)
 class GaussHermite:
     """
-    Deterministic Gauss–Hermite quadrature for 1D expectations under N(mu, var).
+    Deterministic Gauss–Hermite quadrature helper.
 
-    We use:
-        E_{N(mu,var)}[ g(f) ] = 1/sqrt(pi) * sum_j w_j * g(mu + sqrt(2*var) * x_j)
+    This object provides nodes and weights for expectations of the form:
 
-    Notes:
-    - Assumes var >= 0 (we clip in callers).
-    - Pure JAX, jit/vmap-friendly.
+        E_{N(0,1)}[f(z)] ≈ sum_i w_i f(x_i)
+
+    Notes
+    -----
+    * Only GH-20 is provided (by design).
+    * Nodes/weights are constants -> JIT-safe.
+    * Scaling to N(mu, sigma^2) is handled outside.
     """
     n: int = 20
-    dtype: jnp.dtype = jnp.float64
 
     def nodes_weights(self):
-        # Use NumPy-backed Hermite nodes/weights through jax.numpy? Not available.
-        # We hardcode via jnp.polynomial.hermite? Also not available.
-        #
-        # Practical approach: use jax.scipy.special.roots_hermite if present.
-        # If your JAX doesn't have it, replace this with a precomputed table.
-        try:
-            from jax.scipy.special import roots_hermite  # type: ignore
-            x, w = roots_hermite(self.n)
-        except Exception as e:
-            raise RuntimeError(
-                "Gauss–Hermite nodes/weights not available in this JAX build. "
-                "Either (i) add a precomputed GH table, or (ii) use MC estimator."
-            ) from e
-
-        x = x.astype(self.dtype)
-        w = w.astype(self.dtype)
-        return x, w
-
-    def expect_nll_1d(self, y, mu, var, phi, nll_1d_fn):
-        """
-        Compute E_{N(mu,var)}[ nll_1d_fn(y,f,phi) ].
-
-        Inputs are scalars (or broadcastable scalars).
-        """
-        x, w = self.nodes_weights()
-        var = jnp.clip(var, a_min=0.0)
-        f = mu + jnp.sqrt(2.0 * var) * x  # (n,)
-        vals = jax.vmap(lambda ff: nll_1d_fn(y, ff, phi))(f)  # (n,)
-        return (w @ vals) / jnp.sqrt(jnp.pi)
+        if self.n != 20:
+            raise NotImplementedError(
+                "Only GH-20 is supported. "
+                "If you need another order, add a precomputed table."
+            )
+        return _GH20_X, _GH20_W
