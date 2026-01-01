@@ -1,12 +1,6 @@
+# infodynamics_jax/kernels/linear.py
 import jax.numpy as jnp
+from .params import KernelParams
 
-def linear(params, X, Z):
-    """
-    params:
-      variance: scalar
-      offset: scalar or (Q,)
-    """
-    offset = params.get("offset", 0.0)
-    Xc = X - offset
-    Zc = Z - offset
-    return params["variance"] * (Xc @ Zc.T)
+def linear(X, Z, params: KernelParams):
+    return params.variance * (X - params.offset) @ (Z - params.offset).T

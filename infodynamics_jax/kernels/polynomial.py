@@ -1,12 +1,6 @@
+# infodynamics_jax/kernels/polynomial.py
 import jax.numpy as jnp
+from .params import KernelParams
 
-def polynomial(params, X, Z):
-    """
-    params:
-      variance
-      offset
-      degree (int)
-    """
-    offset = params.get("offset", 0.0)
-    degree = params["degree"]
-    return params["variance"] * (X @ Z.T + offset) ** degree
+def polynomial(X, Z, params: KernelParams):
+    return params.variance * (X @ Z.T + params.offset) ** params.degree

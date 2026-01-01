@@ -1,6 +1,10 @@
+# infodynamics_jax/kernels/rbf.py
 import jax.numpy as jnp
+from .params import KernelParams
 from .utils import scaled_sqdist
 
-def rbf(params, X, Z):
-    sq = scaled_sqdist(X, Z, params["lengthscale"])
-    return params["variance"] * jnp.exp(-0.5 * sq)
+def rbf(X, Z, params: KernelParams):
+    ell = params.lengthscale
+    var = params.variance
+    r2 = scaled_sqdist(X, Z, ell)
+    return var * jnp.exp(-0.5 * r2)

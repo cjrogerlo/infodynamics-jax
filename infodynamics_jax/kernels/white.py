@@ -1,9 +1,8 @@
+# infodynamics_jax/kernels/white.py
 import jax.numpy as jnp
+from .params import KernelParams
 
-def white(params, X, Z):
-    """
-    White noise kernel (only non-zero on diagonal when X == Z)
-    """
-    var = params["variance"]
-    eq = jnp.all(X[:, None, :] == Z[None, :, :], axis=-1)
-    return var * eq.astype(X.dtype)
+def white(X, Z, params: KernelParams):
+    if X.shape[0] != Z.shape[0]:
+        return jnp.zeros((X.shape[0], Z.shape[0]))
+    return params.variance * jnp.eye(X.shape[0])

@@ -1,19 +1,10 @@
+# infodynamics_jax/kernels/periodic.py
 import jax.numpy as jnp
+from .params import KernelParams
 
-def periodic(params, X, Z):
-    """
-    params:
-      lengthscale
-      variance
-      period
-    """
-    period = params["period"]
-    ell = params["lengthscale"]
-
-    X = X / ell
-    Z = Z / ell
-
-    diff = X[:, None, :] - Z[None, :, :]
-    sin2 = jnp.sum(jnp.sin(jnp.pi * diff / period) ** 2, axis=-1)
-
-    return params["variance"] * jnp.exp(-2.0 * sin2)
+def periodic(X, Z, params: KernelParams):
+    ell = params.lengthscale
+    p = params.period
+    diff = jnp.pi * (X[:, None, :] - Z[None, :, :]) / p
+    sin2 = jnp.sum(jnp.sin(diff) ** 2, axis=-1)
+    return params.variance * jnp.exp(-2.0 * sin2 / (ell ** 2))
