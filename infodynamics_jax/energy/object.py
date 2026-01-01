@@ -1,54 +1,198 @@
 # infodynamics_jax/energy/object.py
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Optional, Literal, Callable
 
+from dataclasses import dataclass
+from typing import Callable, Literal, Optional
+
+import jax
 import jax.numpy as jnp
 
-from .gaussian import inertial_energy_gaussian_closed_form
-from .expected import expected_nll_factorised_gh, expected_nll_factorised_mc
+from ..kernels import get as get_kernel
+from ..likelihoods import get as get_likelihood
+
+from .expected import (
+    VariationalState,
+    expected_nll_factorised_gh,
+    expected_nll_factorised_mc,
+)
+from .gaussian import gaussian_expected_nll_1d
+from .gh import GaussHermite
 
 
-Approx = Literal["closed_form", "gh", "mc"]
+Estimator = Literal["conjugate", "gh", "mc"]
 
 
-@dataclass(frozen=True)
+@dataclass
 class InertialEnergy:
     """
-    Unified inertial energy callable.
+    Callable inertial energy object.
 
-    Conjugate Gaussian:
-      E(phi) = E_{p(f|phi)}[-log p(y|f,phi)]  (closed form)
+    This object represents the primitive quantity of the framework:
 
-    Non-conjugate (factorised likelihood):
-      Approximate with q(f_i|phi) marginals induced by q(u|phi),
-      then sum 1D expectations via GH or MC.
+        E(phi)
+        = E_{q(f|phi)}[-log p(y | f, phi)]
+
+    All approximation choices (conjugate / GH / MC, full/diag covariance)
+    are implementation details internal to this object.
+
+    The inference layer (optimisation, MCMC, SMC, dynamics)
+    must ONLY interact with this object via __call__.
     """
-    likelihood: object
-    approx: Approx = "gh"
-    n_gh: int = 32
-    n_mc: int = 32
 
-    def __call__(self, *, key=None, y, K_ff=None, mu=None, var=None, phi=None):
+    kernel: str
+    likelihood: str
+
+    estimator: Estimator = "gh"
+
+    # GH-specific
+    gh_order: int = 20
+    gh_dtype: jnp.dtype = jnp.float64
+
+    # MC-specific
+    mc_samples: int = 16
+
+    def __post_init__(self):
+        # Resolve kernel / likelihood once (pure functions)
+        self.kernel_fn = get_kernel(self.kernel)
+        self.likelihood_obj = get_likelihood(self.likelihood)
+
+        # sanity checks
+        if self.estimator not in ("conjugate", "gh", "mc"):
+            raise ValueError(f"Unknown estimator: {self.estimator}")
+
+        if self.estimator == "conjugate":
+            if not hasattr(self.likelihood_obj, "is_gaussian") or not self.likelihood_obj.is_gaussian:
+                raise ValueError(
+                    "Conjugate estimator requested, but likelihood is not Gaussian."
+                )
+
+        if self.estimator == "gh":
+            self.gh = GaussHermite(n=self.gh_order, dtype=self.gh_dtype)
+
+    # ------------------------------------------------------------------
+    # public interface
+    # ------------------------------------------------------------------
+
+    def __call__(
+        self,
+        phi,
+        X: jnp.ndarray,
+        Y: jnp.ndarray,
+        state: Optional[VariationalState] = None,
+        *,
+        key: Optional[jax.random.KeyArray] = None,
+    ) -> jnp.ndarray:
         """
-        Choose one of:
-        - closed_form: needs (y, K_ff, phi)
-        - gh        : needs (y, mu, var, phi)
-        - mc        : needs (key, y, mu, var, phi)
+        Evaluate inertial energy E(phi).
+
+        Parameters
+        ----------
+        phi:
+            Structural parameters (kernel hyperparameters, inducing inputs,
+            likelihood hyperparameters, etc.)
+
+        X: (N,Q)
+            Inputs.
+
+        Y: (N,) or (N,D)
+            Observations.
+
+        state:
+            VariationalState for q(u|phi).
+            Required for non-conjugate estimators (gh / mc).
+
+        key:
+            PRNG key for MC estimator.
+
+        Returns
+        -------
+        energy: scalar
+            Inertial energy E(phi).
         """
-        if self.approx == "closed_form":
-            if K_ff is None or phi is None:
-                raise ValueError("closed_form requires K_ff and phi.")
-            return inertial_energy_gaussian_closed_form(y, K_ff, phi)
+        if self.estimator == "conjugate":
+            return self._conjugate_energy(phi, X, Y)
 
-        if self.approx == "gh":
-            if mu is None or var is None or phi is None:
-                raise ValueError("gh requires mu, var, phi.")
-            return expected_nll_factorised_gh(y, mu, var, phi, self.likelihood, n_gh=self.n_gh)
+        if state is None:
+            raise ValueError("VariationalState must be provided for non-conjugate energy.")
 
-        if self.approx == "mc":
-            if key is None or mu is None or var is None or phi is None:
-                raise ValueError("mc requires key, mu, var, phi.")
-            return expected_nll_factorised_mc(key, y, mu, var, phi, self.likelihood, n_mc=self.n_mc)
+        if self.estimator == "gh":
+            return self._gh_energy(phi, X, Y, state)
 
-        raise ValueError(f"Unknown approx: {self.approx}")
+        if self.estimator == "mc":
+            if key is None:
+                raise ValueError("PRNG key required for MC energy estimator.")
+            return self._mc_energy(phi, X, Y, state, key)
+
+        raise RuntimeError("Unreachable.")
+
+    # ------------------------------------------------------------------
+    # internal implementations
+    # ------------------------------------------------------------------
+
+    def _conjugate_energy(self, phi, X, Y) -> jnp.ndarray:
+        """
+        Gaussian likelihood, exact expectation.
+
+        Uses:
+            E_{N(mu,var)}[-log p(y|f,phi)]
+        with mu=0, var=K_ff(phi).
+        """
+        # full GP prior covariance
+        Kff = self.kernel_fn(X, X, phi.theta)
+        Kff = 0.5 * (Kff + Kff.T)
+
+        var = jnp.diag(Kff)
+        mu = jnp.zeros_like(var)
+
+        # broadcast Y if needed
+        Yb = Y if Y.ndim == 2 else Y[:, None]
+
+        def one_dim(y, m, v):
+            return gaussian_expected_nll_1d(y, m, v, phi)
+
+        vals = jax.vmap(
+            lambda yrow, m, v: jnp.sum(jax.vmap(one_dim)(yrow, m, v)),
+            in_axes=(0, 0, 0),
+        )(Yb, mu[:, None], var[:, None])
+
+        return jnp.sum(vals)
+
+    def _gh_energy(self, phi, X, Y, state: VariationalState) -> jnp.ndarray:
+        """
+        Rao–Blackwellised inertial energy using Gauss–Hermite quadrature.
+        """
+        nll_1d = self.likelihood_obj.neg_loglik_1d
+
+        return expected_nll_factorised_gh(
+            phi=phi,
+            X=X,
+            Y=Y,
+            kernel_fn=self.kernel_fn,
+            state=state,
+            nll_1d_fn=nll_1d,
+            gh=self.gh,
+        )
+
+    def _mc_energy(
+        self,
+        phi,
+        X,
+        Y,
+        state: VariationalState,
+        key: jax.random.KeyArray,
+    ) -> jnp.ndarray:
+        """
+        Rao–Blackwellised inertial energy using Monte Carlo estimator.
+        """
+        nll_1d = self.likelihood_obj.neg_loglik_1d
+
+        return expected_nll_factorised_mc(
+            phi=phi,
+            X=X,
+            Y=Y,
+            kernel_fn=self.kernel_fn,
+            state=state,
+            nll_1d_fn=nll_1d,
+            key=key,
+            n_samples=self.mc_samples,
+        )
