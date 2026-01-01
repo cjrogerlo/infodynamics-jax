@@ -2,24 +2,15 @@
 
 _LIKELIHOOD_REGISTRY = {}
 
-
-def register(name, likelihood):
-    """
-    Register a likelihood object or factory under a string key.
-    """
+def register(name: str, obj):
     if name in _LIKELIHOOD_REGISTRY:
         raise KeyError(f"Likelihood '{name}' already registered.")
-    _LIKELIHOOD_REGISTRY[name] = likelihood
+    _LIKELIHOOD_REGISTRY[name] = obj
 
-
-def get(name):
-    """
-    Retrieve a likelihood by name.
-    """
+def get(name: str):
     try:
         return _LIKELIHOOD_REGISTRY[name]
     except KeyError:
         raise KeyError(
-            f"Unknown likelihood '{name}'. "
-            f"Available: {list(_LIKELIHOOD_REGISTRY.keys())}"
+            f"Unknown likelihood '{name}'. Available: {list(_LIKELIHOOD_REGISTRY.keys())}"
         )
