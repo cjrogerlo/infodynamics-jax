@@ -1,18 +1,11 @@
 import jax.numpy as jnp
-import jax.nn as jnn
+import jax.scipy.special as jsp
 
 class PoissonLikelihood:
-    """
-    Poisson likelihood with log link:
-        p(y | f) = Poisson(exp(f))
-    """
-
     @staticmethod
     def neg_loglik_1d(y, f, phi_like=None):
-        """
-        y >= 0 integer
-        """
         rate = jnp.exp(f)
-        return rate - y * f + jnn.lgamma(y + 1.0)
+        return rate - y * f + jsp.gammaln(y + 1.0)
 
 poisson = PoissonLikelihood()
+
