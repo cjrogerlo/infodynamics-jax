@@ -1,21 +1,18 @@
 # infodynamics_jax/energy/__init__.py
+from __future__ import annotations
 
-from .gaussian import gaussian_expected_nll_1d
-from .state import VariationalState
-from .expected import (
-    qfi_from_qu_full,
-    expected_nll_factorised_gh,
-    expected_nll_factorised_mc,
-)
-from .gh import GaussHermite
-from .object import InertialEnergy
+from .base import EnergyTerm
+from .compose import SumEnergy, WeightedEnergy, ConditionalEnergy, TargetEnergy
+from .prior import PriorEnergy
+from .inertial import InertialEnergy, InertialCFG
 
 __all__ = [
+    "EnergyTerm",
+    "SumEnergy",
+    "WeightedEnergy",
+    "ConditionalEnergy",
+    "TargetEnergy",
+    "PriorEnergy",
     "InertialEnergy",
-    "VariationalState",
-    "qfi_from_qu_full",
-    "expected_nll_factorised_gh",
-    "expected_nll_factorised_mc",
-    "GaussHermite",
-    "gaussian_expected_nll_1d",
+    "InertialCFG",
 ]

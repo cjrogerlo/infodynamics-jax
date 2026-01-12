@@ -2,9 +2,9 @@ import jax
 import jax.numpy as jnp
 
 from infodynamics_jax.core.phi import Phi
-from infodynamics_jax.kernels.params import KernelParams
+from infodynamics_jax.gp.kernels.params import KernelParams
 from infodynamics_jax.energy import InertialEnergy
-from infodynamics_jax.energy.expected import VariationalState
+from infodynamics_jax.gp.ansatz import VariationalState
 
 def _make_problem(D):
     N, M = 8, 6

@@ -1,8 +1,8 @@
 import jax.numpy as jnp
 
 from infodynamics_jax.core.phi import Phi
-from infodynamics_jax.kernels.params import KernelParams
-from infodynamics_jax.energy.expected import qfi_from_qu_full
+from infodynamics_jax.gp.kernels.params import KernelParams
+from infodynamics_jax.gp.ansatz import qfi_from_qu_full
 
 def test_qfi_shapes():
     N, M, D = 10, 7, 2
@@ -19,7 +19,7 @@ def test_qfi_shapes():
     m_u = jnp.zeros((M, D))
     L_u = jnp.eye(M)
 
-    from infodynamics_jax.kernels import get
+    from infodynamics_jax.gp.kernels import get
     kernel_fn = get("rbf")
 
     mu, var = qfi_from_qu_full(phi, X, kernel_fn, m_u, L_u)

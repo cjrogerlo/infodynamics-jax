@@ -15,7 +15,7 @@ from .expected import (
     expected_nll_factorised_gh,
     expected_nll_factorised_mc,
 )
-from .gaussian import gaussian_expected_nll_1d
+from .expected import expected_nll_gaussian_1d
 from .gh import GaussHermite
 
 
@@ -147,7 +147,9 @@ class InertialEnergy:
         Yb = Y if Y.ndim == 2 else Y[:, None]
 
         def one_dim(y, m, v):
-            return gaussian_expected_nll_1d(y, m, v, phi)
+            # Gaussian case: use analytic solution (no ansatz needed)
+            noise_var = phi.likelihood_params.get("noise_var", jnp.array(0.1))
+            return expected_nll_gaussian_1d(y, m, v, noise_var)
 
         vals = jax.vmap(
             lambda yrow, m, v: jnp.sum(jax.vmap(one_dim)(yrow, m, v)),

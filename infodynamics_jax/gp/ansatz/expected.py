@@ -17,6 +17,26 @@ import jax.numpy as jnp
 from jax.tree_util import register_pytree_node_class
 from .state import VariationalState
 
+# -----------------------------------------------------------------------------
+# Analytic shortcuts: Gaussian likelihood under Gaussian q(f)
+# -----------------------------------------------------------------------------
+def expected_nll_gaussian_1d(
+    y: jnp.ndarray,
+    mu: jnp.ndarray,
+    var: jnp.ndarray,
+    noise_var: jnp.ndarray,
+) -> jnp.ndarray:
+    """
+    Analytic expectation:
+        E_{q(f)=N(mu,var)}[-log N(y; f, noise_var)]
+    """
+    noise_var = jnp.asarray(noise_var)
+    return 0.5 * (
+        jnp.log(2.0 * jnp.pi * noise_var)
+        + ((y - mu) ** 2 + var) / noise_var
+    )
+
+
 def _as_2d(Y: jnp.ndarray) -> jnp.ndarray:
     return Y[:, None] if Y.ndim == 1 else Y
 
@@ -103,6 +123,13 @@ def expected_nll_factorised_gh(phi, X, Y, kernel_fn, state: VariationalState,
 
     mu_f, var_f = qfi_from_qu_full(phi, X, kernel_fn, state.m_u, state.L_u)  # (N,D)
 
+    if nll_1d_fn.__name__ == "neg_loglik_1d" and hasattr(phi, "likelihood_params"):
+        noise_var = phi.likelihood_params.get("noise_var", None)
+        if noise_var is not None:
+            return jnp.sum(
+                expected_nll_gaussian_1d(Y, mu_f, var_f, noise_var)
+            )
+
     def one_dim(y, mu, var):
         return gh.expect_nll_1d(y, mu, var, phi, nll_1d_fn)
 
@@ -135,6 +162,13 @@ def expected_nll_factorised_mc(phi, X, Y, kernel_fn, state: VariationalState,
     mu_f, var_f = qfi_from_qu_full(phi, X, kernel_fn, state.m_u, state.L_u)  # (N,D)
     var_f = jnp.clip(var_f, a_min=0.0)
 
+    if nll_1d_fn.__name__ == "neg_loglik_1d" and hasattr(phi, "likelihood_params"):
+        noise_var = phi.likelihood_params.get("noise_var", None)
+        if noise_var is not None:
+            return jnp.sum(
+                expected_nll_gaussian_1d(Y, mu_f, var_f, noise_var)
+            )
+
     N, D = Y.shape
     eps = jax.random.normal(key, shape=(n_samples, N, D), dtype=mu_f.dtype)
     f_samps = mu_f[None, :, :] + jnp.sqrt(var_f[None, :, :]) * eps  # (S,N,D)
@@ -146,4 +180,3 @@ def expected_nll_factorised_mc(phi, X, Y, kernel_fn, state: VariationalState,
 
     vals = jax.vmap(nll_of_sample)(f_samps)  # (S,)
     return jnp.mean(vals)
-

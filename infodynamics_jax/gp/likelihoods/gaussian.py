@@ -21,3 +21,8 @@ class GaussianLikelihood:
         )
 
 gaussian = GaussianLikelihood()
+# Tag the function for analytic fast-path detection in expected energy computation
+GaussianLikelihood.neg_loglik_1d._likelihood = "gaussian"
+
+# Mark that this likelihood supports analytic marginalisation
+GaussianLikelihood.supports_analytic_marginal = True
