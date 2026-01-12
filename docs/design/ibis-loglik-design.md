@@ -1,85 +1,85 @@
-# IBIS log_likelihood_fn 設計分析
+# IBIS log_likelihood_fn Design Analysis
 
-## 問題
+## Problem
 
-IBIS 需要 `log p(y_t | φ)` 來更新 weights：
+IBIS needs `log p(y_t | φ)` to update weights:
 ```
 logw += log p(y_t | φ)
 ```
 
-但 energy layer 只提供：
+But energy layer only provides:
 ```
 E(φ) = E_{q(f|φ)}[-log p(y|f,φ)]
 ```
 
-對於 non-conjugate，由於 Jensen's inequality：
+For non-conjugate, due to Jensen's inequality:
 ```
 E[-log p(y|f,φ)] ≠ -log p(y|φ)
 ```
 
-## 當前設計：`log_likelihood_fn` 參數
+## Current Design: `log_likelihood_fn` Parameter
 
-### 優點
-- ✅ 不違反 energy layer 設計原則（不要求 energy 提供 marginal likelihood）
-- ✅ 給用戶靈活性
-- ✅ 向後兼容（默認使用 `-energy` 近似）
+### Advantages
+- ✅ Does not violate energy layer design principles (does not require energy to provide marginal likelihood)
+- ✅ Gives users flexibility
+- ✅ Backward compatible (default uses `-energy` approximation)
 
-### 缺點
-- ⚠️ 需要用戶額外提供函數
-- ⚠️ 對於 Gaussian，理論上不需要（但實際上 `-energy` 已經足夠）
+### Disadvantages
+- ⚠️ Requires users to provide additional function
+- ⚠️ For Gaussian, theoretically not needed (but in practice `-energy` is sufficient)
 
-## 替代方案
+## Alternative Solutions
 
-### 方案 1: 完全移除 `log_likelihood_fn`，只使用 `-energy`
+### Solution 1: Completely Remove `log_likelihood_fn`, Only Use `-energy`
 
-**理由**：
-- 對於 Gaussian: `-energy` 是準確的（up to constant）
-- 對於 non-conjugate: 使用近似也是合理的（IBIS 本身是近似方法）
+**Reasoning**:
+- For Gaussian: `-energy` is accurate (up to constant)
+- For non-conjugate: using approximation is reasonable (IBIS itself is an approximate method)
 
-**問題**：
-- 對於需要準確 log likelihood 的場景，無法滿足
+**Problem**:
+- Cannot satisfy scenarios that need accurate log likelihood
 
-### 方案 2: 讓 `InertialEnergy` 提供可選的 `log_likelihood` 方法
+### Solution 2: Let `InertialEnergy` Provide Optional `log_likelihood` Method
 
-**問題**：
-- ❌ 違反 energy layer 設計原則
-- ❌ energy layer 明確不提供 `marginal_likelihood`
+**Problem**:
+- ❌ Violates energy layer design principles
+- ❌ Energy layer explicitly does not provide `marginal_likelihood`
 
-### 方案 3: 使用 `vfe_objective` 的負值（僅 Gaussian）
+### Solution 3: Use Negative of `vfe_objective` (Gaussian Only)
 
-**問題**：
-- ❌ `vfe_objective` 是 optimization objective，不是 model energy
-- ❌ 只適用於 Gaussian
-- ❌ 混合了 optimization 和 inference 層次
+**Problem**:
+- ❌ `vfe_objective` is an optimization objective, not model energy
+- ❌ Only applicable to Gaussian
+- ❌ Mixes optimization and inference layers
 
-### 方案 4: 保持當前設計，但改進文檔
+### Solution 4: Keep Current Design, But Improve Documentation
 
-**建議**：
-- 明確說明何時需要 `log_likelihood_fn`
-- 提供使用範例
-- 說明對於 Gaussian，`-energy` 已經足夠
+**Recommendation**:
+- Clearly state when `log_likelihood_fn` is needed
+- Provide usage examples
+- Explain that for Gaussian, `-energy` is sufficient
 
-## 推薦方案
+## Recommended Solution
 
-**保持當前設計（方案 4）**，但：
+**Keep current design (Solution 4)**, but:
 
-1. **改進默認行為**：
-   - 對於 Gaussian likelihood，自動使用 `-energy`（準確）
-   - 對於 non-conjugate，使用 `-energy` 作為近似（除非提供 `log_likelihood_fn`）
+1. **Improve default behavior**:
+   - For Gaussian likelihood, automatically use `-energy` (accurate)
+   - For non-conjugate, use `-energy` as approximation (unless `log_likelihood_fn` is provided)
 
-2. **文檔改進**：
-   - 明確說明：Gaussian 不需要 `log_likelihood_fn`
-   - 說明：non-conjugate 可以使用近似，或提供準確函數
+2. **Documentation improvements**:
+   - Clearly state: Gaussian does not need `log_likelihood_fn`
+   - Explain: non-conjugate can use approximation, or provide accurate function
 
-3. **可選增強**：
-   - 檢測 `InertialEnergy` 的 `estimator`，如果是 "analytic"（Gaussian），自動使用 `-energy`
-   - 但這需要檢查 energy 內部結構，可能違反抽象
+3. **Optional enhancement**:
+   - Detect `InertialEnergy`'s `estimator`, if "analytic" (Gaussian), automatically use `-energy`
+   - But this requires inspecting energy internal structure, may violate abstraction
 
-## 結論
+## Conclusion
 
-當前設計是合理的，但可以：
-1. 改進文檔，明確說明使用場景
-2. 考慮自動檢測 Gaussian 情況（如果可行且不違反抽象）
-3. 提供使用範例
+Current design is reasonable, but can:
+1. Improve documentation, clearly state usage scenarios
+2. Consider automatic detection of Gaussian case (if feasible and does not violate abstraction)
+3. Provide usage examples
 
-**關鍵點**：`log_likelihood_fn` 是**可選的**，默認使用 `-energy` 近似已經足夠大多數場景。
+**Key point**: `log_likelihood_fn` is **optional**, default use of `-energy` approximation is sufficient for most scenarios.

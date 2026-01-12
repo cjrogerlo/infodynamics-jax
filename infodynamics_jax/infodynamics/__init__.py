@@ -12,7 +12,7 @@ The runner orchestrates the composition but does not define either
 the energy landscape or the dynamics operators.
 
 Design principle:
-  Infodynamics = energy landscape + inference dynamics 的組合律
+  Infodynamics = energy landscape + inference dynamics composition law
   - energy/ defines the landscape
   - inference/ defines the dynamics
   - infodynamics/ defines the composition / execution

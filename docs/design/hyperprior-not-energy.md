@@ -1,74 +1,74 @@
-# Hyperprior 不是 Energy
+# Hyperprior is Not Energy
 
-## 問題
+## Problem
 
-Hyperprior 不應該是 `EnergyTerm`，因為它不符合 energy 的定義。
+Hyperprior should not be `EnergyTerm`, because it does not conform to the definition of energy.
 
-## Energy 的定義
+## Definition of Energy
 
-根據 `docs/energy_design.md`：
+According to `docs/energy_design.md`:
 
 ```
 E(phi) = E_{q(f | phi)}[ -log p(y | f, phi) ]
 ```
 
-這是 **inertial energy**，是數據相關的。
+This is **inertial energy**, which is data-dependent.
 
-## Hyperprior 是什麼？
+## What is Hyperprior?
 
-Hyperprior 是 `-log p(phi)`，即對 hyperparameters 的 prior。
+Hyperprior is `-log p(phi)`, i.e., the prior on hyperparameters.
 
-這**不是** energy，因為：
-- Energy 是數據相關的：`E[-log p(y|f,phi)]`
-- Hyperprior 是數據無關的：`-log p(phi)`
+This is **not** energy, because:
+- Energy is data-dependent: `E[-log p(y|f,phi)]`
+- Hyperprior is data-independent: `-log p(phi)`
 
-## 設計問題
+## Design Problem
 
-### 當前設計（錯誤）
+### Current Design (Incorrect)
 
 ```python
-class HyperpriorEnergy(EnergyTerm):  # ❌ 不應該繼承 EnergyTerm
+class HyperpriorEnergy(EnergyTerm):  # ❌ Should not inherit EnergyTerm
     ...
 ```
 
-**問題**：
-- Hyperprior 不是 energy
-- 違反了 energy layer 的設計原則
-- 混淆了概念層次
+**Problems**:
+- Hyperprior is not energy
+- Violates energy layer design principles
+- Confuses conceptual layers
 
-### 正確的設計
+### Correct Design
 
-Hyperprior 應該：
-1. **不是 EnergyTerm**（不符合 energy 定義）
-2. **可以作為 term 添加到 TargetEnergy**（通過組合）
-3. **或者應該在 inference layer 處理**（MAP-II 可以添加 hyperprior）
+Hyperprior should:
+1. **Not be EnergyTerm** (does not conform to energy definition)
+2. **Can be added as term to TargetEnergy** (through composition)
+3. **Or should be handled in inference layer** (MAP-II can add hyperprior)
 
-## 解決方案
+## Solutions
 
-### 選項 1: 作為獨立的 Term（推薦）
+### Option 1: As Independent Term (Recommended)
 
 ```python
-# 不繼承 EnergyTerm，但可以作為 term 使用
+# Does not inherit EnergyTerm, but can be used as term
 class HyperpriorTerm:
     """Hyperprior on φ (not an energy, but a regularization term)."""
     def __call__(self, phi, X=None, Y=None, key=None):
-        return -log p(phi)  # 或 log p(phi) 的負值
+        return -log p(phi)  # or negative of log p(phi)
 ```
 
-然後在 `TargetEnergy` 中：
+Then in `TargetEnergy`:
 ```python
 @dataclass(frozen=True)
 class TargetEnergy(EnergyTerm):
     inertial: EnergyTerm
     prior: Optional[EnergyTerm] = None  # Prior on X
-    hyperprior: Optional[Callable] = None  # -log p(phi)，不是 EnergyTerm
+    hyperprior: Optional[Callable] = None  # -log p(phi), not EnergyTerm
     extra: Optional[Sequence[EnergyTerm]] = None
 ```
 
-### 選項 2: 在 Inference Layer 處理
+### Option 2: Handle in Inference Layer
 
 ```python
-# map2.py 可以接受 hyperprior 作為額外參數
+# map2.py can accept hyperprior as additional parameter
 def run(
     self,
     energy: EnergyTerm,
@@ -85,68 +85,68 @@ def run(
     ...
 ```
 
-### 選項 3: 通過 `extra` 參數（當前可行）
+### Option 3: Through `extra` Parameter (Currently Feasible)
 
 ```python
-# 不叫 HyperpriorEnergy，而是作為普通函數
+# Not called HyperpriorEnergy, but as ordinary function
 def hyperprior_term(phi, X, Y, key=None):
     return -log p(phi)
 
 target = TargetEnergy(
     inertial=inertial_energy,
-    extra=[hyperprior_term],  # 作為 extra term
+    extra=[hyperprior_term],  # As extra term
 )
 ```
 
-## 推薦方案
+## Recommended Solution
 
-**選項 1 + 選項 3 的混合**：
+**Hybrid of Option 1 + Option 3**:
 
-1. **不創建 `HyperpriorEnergy` 類**（違反設計原則）
-2. **提供工具函數**（不是 EnergyTerm）
-3. **通過 `TargetEnergy.extra` 或 `hyperprior` 參數添加**
+1. **Do not create `HyperpriorEnergy` class** (violates design principles)
+2. **Provide utility functions** (not EnergyTerm)
+3. **Add through `TargetEnergy.extra` or `hyperprior` parameter**
 
 ```python
-# 工具函數（不是 EnergyTerm）
+# Utility function (not EnergyTerm)
 def hyperprior_l2(phi, fields=None, lam=1.0):
     """L2 hyperprior on kernel params (not an energy)."""
     ...
 
-# 使用
+# Usage
 target = TargetEnergy(
     inertial=inertial_energy,
     extra=[lambda phi, X, Y, key=None: hyperprior_l2(phi)],
 )
 ```
 
-或者：
+Or:
 
 ```python
-# 在 inference layer 處理
+# Handle in inference layer
 map2.run(
     energy=target_energy,
     phi_init=phi_init,
-    hyperprior=lambda phi: hyperprior_l2(phi),  # 在 inference layer 添加
+    hyperprior=lambda phi: hyperprior_l2(phi),  # Add in inference layer
     ...
 )
 ```
 
-## 關鍵區別
+## Key Distinctions
 
-| 概念 | 定義 | 是否 Energy |
-|------|------|------------|
+| Concept | Definition | Is Energy? |
+|---------|------------|------------|
 | Inertial Energy | `E[-log p(y|f,phi)]` | ✅ Yes |
-| Prior on X | `-log p(X)` | ⚠️ 可以是 EnergyTerm（但只依賴 X） |
-| Hyperprior | `-log p(phi)` | ❌ No（數據無關，不是 energy） |
+| Prior on X | `-log p(X)` | ⚠️ Can be EnergyTerm (but only depends on X) |
+| Hyperprior | `-log p(phi)` | ❌ No (data-independent, not energy) |
 
-## 結論
+## Conclusion
 
-Hyperprior **不應該是 EnergyTerm**，因為：
-1. 它不符合 energy 的定義（不是 `E[-log p(y|f,phi)]`）
-2. 它是數據無關的（energy 是數據相關的）
-3. 它應該在 inference layer 或作為組合 term 處理
+Hyperprior **should not be EnergyTerm**, because:
+1. It does not conform to energy definition (not `E[-log p(y|f,phi)]`)
+2. It is data-independent (energy is data-dependent)
+3. It should be handled in inference layer or as composition term
 
-**建議**：
-- 移除 `HyperpriorEnergy` 類
-- 提供工具函數（不是 EnergyTerm）
-- 通過 `TargetEnergy.extra` 或 inference layer 添加
+**Recommendation**:
+- Remove `HyperpriorEnergy` class
+- Provide utility functions (not EnergyTerm)
+- Add through `TargetEnergy.extra` or inference layer

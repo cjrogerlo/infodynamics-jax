@@ -1,117 +1,117 @@
-# Algorithm 層次與 Ansatz 使用
+# Algorithm Layers and Ansatz Usage
 
-## 問題核心
+## Core Problem
 
-不同 algorithm 層次需要不同的抽象：
+Different algorithm layers need different abstractions:
 
 1. **`sampling/` (HMC, NUTS, MALA)**
-   - **層次**: 純 sampler
-   - **需要**: `energy(phi, ...) -> scalar`
-   - **Ansatz**: ✅ 已通過 `InertialEnergy` 內部處理
-   - **不關心**: energy 內部如何計算
+   - **Layer**: Pure sampler
+   - **Needs**: `energy(phi, ...) -> scalar`
+   - **Ansatz**: ✅ Already handled internally through `InertialEnergy`
+   - **Does not care**: How energy is computed internally
 
 2. **`optimisation/map2.py`**
-   - **層次**: 優化 energy
-   - **需要**: `energy(phi, ...) -> scalar`
-   - **Ansatz**: ✅ 已通過 `InertialEnergy` 內部處理
-   - **不關心**: energy 內部如何計算
+   - **Layer**: Optimize energy
+   - **Needs**: `energy(phi, ...) -> scalar`
+   - **Ansatz**: ✅ Already handled internally through `InertialEnergy`
+   - **Does not care**: How energy is computed internally
 
 3. **`particle/annealed.py`**
-   - **層次**: 使用 energy 進行 β-annealing
-   - **需要**: `energy(phi, ...) -> scalar`
-   - **Ansatz**: ✅ 已通過 `InertialEnergy` 內部處理
-   - **不關心**: energy 內部如何計算
+   - **Layer**: Uses energy for β-annealing
+   - **Needs**: `energy(phi, ...) -> scalar`
+   - **Ansatz**: ✅ Already handled internally through `InertialEnergy`
+   - **Does not care**: How energy is computed internally
 
 4. **`particle/ibis.py`** ⚠️
-   - **層次**: 需要 `log p(y|φ)`，不只是 energy
-   - **問題**: `E[-log p(y|f,φ)] ≠ -log p(y|φ)` (non-conjugate)
-   - **Ansatz**: ❌ 需要**重新調用** ansatz 來計算 `log p(y|φ)`
+   - **Layer**: Needs `log p(y|φ)`, not just energy
+   - **Problem**: `E[-log p(y|f,φ)] ≠ -log p(y|φ)` (non-conjugate)
+   - **Ansatz**: ❌ Needs to **re-call** ansatz to compute `log p(y|φ)`
 
-## 關鍵問題
+## Key Problem
 
-### IBIS 需要什麼？
+### What Does IBIS Need?
 
 IBIS weight update:
 ```
 logw += log p(y_t | φ)
 ```
 
-但 `InertialEnergy` 提供:
+But `InertialEnergy` provides:
 ```
 E(φ) = E_{q(f|φ)}[-log p(y|f,φ)]
 ```
 
-對於 non-conjugate:
+For non-conjugate:
 - `E[-log p(y|f,φ)]` ≠ `-log E[p(y|f,φ)]` (Jensen's inequality)
-- 需要計算 `log ∫ p(y|f,φ) q(f|φ) df`
+- Need to compute `log ∫ p(y|f,φ) q(f|φ) df`
 
-### Ansatz 已經做了什麼？
+### What Does Ansatz Already Do?
 
-`InertialEnergy` 內部調用 ansatz 計算:
+`InertialEnergy` internally calls ansatz to compute:
 ```
 E[-log p(y|f,φ)] = Σ_i E_{q(f_i|φ)}[-log p(y_i|f_i,φ)]
 ```
 
-但 IBIS 需要:
+But IBIS needs:
 ```
 log p(y|φ) = log ∫ p(y|f,φ) q(f|φ) df
 ```
 
-這是**不同的計算**！
+This is a **different computation**!
 
-## 解決方案
+## Solutions
 
-### 選項 1: IBIS 直接調用 ansatz（推薦）
+### Option 1: IBIS Directly Calls Ansatz (Recommended)
 
-讓 IBIS 能夠訪問 `InertialEnergy` 的內部組件來計算 `log p(y|φ)`：
+Let IBIS access `InertialEnergy`'s internal components to compute `log p(y|φ)`:
 
 ```python
-# IBIS 需要能夠：
-# 1. 獲取 q(f_i|φ) marginals（ansatz 已經計算）
-# 2. 計算 log ∫ p(y_i|f_i,φ) q(f_i|φ) df_i（需要新的 ansatz 函數）
-# 3. 對所有 i 求和
+# IBIS needs to be able to:
+# 1. Get q(f_i|φ) marginals (ansatz already computed)
+# 2. Compute log ∫ p(y_i|f_i,φ) q(f_i|φ) df_i (needs new ansatz function)
+# 3. Sum over all i
 ```
 
-**問題**: 這需要暴露 ansatz 內部，違反封裝
+**Problem**: This requires exposing ansatz internals, violates encapsulation
 
-### 選項 2: 在 `InertialEnergy` 中添加 `log_likelihood` 方法
+### Option 2: Add `log_likelihood` Method to `InertialEnergy`
 
 ```python
 class InertialEnergy(EnergyTerm):
     def __call__(self, phi, X, Y, key=None):
-        # 現有的 energy 計算
+        # Existing energy computation
         ...
     
     def log_likelihood(self, phi, X, Y, key=None):
-        # 計算 log p(y|φ) 使用 ansatz
-        # 對於 Gaussian: 使用 analytic
-        # 對於 non-conjugate: 使用 ansatz
+        # Compute log p(y|φ) using ansatz
+        # For Gaussian: use analytic
+        # For non-conjugate: use ansatz
         ...
 ```
 
-**問題**: 違反 energy layer 設計原則（不提供 marginal likelihood）
+**Problem**: Violates energy layer design principles (does not provide marginal likelihood)
 
-### 選項 3: 創建專門的 `LogLikelihoodTerm`（推薦）
+### Option 3: Create Dedicated `LogLikelihoodTerm` (Recommended)
 
 ```python
 class LogLikelihoodTerm:
-    """專門用於 IBIS 的 log likelihood 計算"""
+    """Dedicated log likelihood computation for IBIS"""
     def __init__(self, inertial_energy: InertialEnergy):
-        # 重用 InertialEnergy 的配置（kernel, likelihood, estimator）
+        # Reuse InertialEnergy's configuration (kernel, likelihood, estimator)
         ...
     
     def __call__(self, phi, X, Y, key=None):
-        # 使用 ansatz 計算 log p(y|φ)
-        # 重用 InertialEnergy 的內部邏輯
+        # Use ansatz to compute log p(y|φ)
+        # Reuse InertialEnergy's internal logic
         ...
 ```
 
-**優點**:
-- ✅ 不違反 energy layer 設計（這是新的 term，不是 energy）
-- ✅ 重用 `InertialEnergy` 的配置和 ansatz 邏輯
-- ✅ IBIS 可以接受 `LogLikelihoodTerm` 或 `EnergyTerm`
+**Advantages**:
+- ✅ Does not violate energy layer design (this is new term, not energy)
+- ✅ Reuses `InertialEnergy`'s configuration and ansatz logic
+- ✅ IBIS can accept `LogLikelihoodTerm` or `EnergyTerm`
 
-### 選項 4: 讓 IBIS 接受 `InertialEnergy` 並內部調用 ansatz
+### Option 4: Let IBIS Accept `InertialEnergy` and Call Ansatz Internally
 
 ```python
 class IBIS:
@@ -120,30 +120,30 @@ class IBIS:
         inertial: InertialEnergy,
         phi, X, Y, key
     ):
-        # 檢查 estimator
+        # Check estimator
         if inertial.cfg.estimator == "analytic":
-            # Gaussian: 使用 -energy
+            # Gaussian: use -energy
             return -inertial(phi, X, Y, key=key)
         else:
-            # Non-conjugate: 需要調用 ansatz
-            # 重用 InertialEnergy 的內部邏輯
+            # Non-conjugate: need to call ansatz
+            # Reuse InertialEnergy's internal logic
             state = inertial._solve_inner(phi, X, Y)
-            # 計算 log p(y|φ) 而不是 E[-log p(y|f,φ)]
+            # Compute log p(y|φ) instead of E[-log p(y|f,φ)]
             ...
 ```
 
-**問題**: 需要訪問 `InertialEnergy` 的私有方法
+**Problem**: Requires accessing `InertialEnergy`'s private methods
 
-## 推薦方案
+## Recommended Solution
 
-**選項 3 + 選項 4 的混合**:
+**Hybrid of Option 3 + Option 4**:
 
-1. 創建 `LogLikelihoodTerm` 作為新的 protocol/interface
-2. 讓 `InertialEnergy` 可以轉換為 `LogLikelihoodTerm`
-3. IBIS 接受 `LogLikelihoodTerm` 或 `EnergyTerm`（向後兼容）
+1. Create `LogLikelihoodTerm` as new protocol/interface
+2. Let `InertialEnergy` be convertible to `LogLikelihoodTerm`
+3. IBIS accepts `LogLikelihoodTerm` or `EnergyTerm` (backward compatible)
 
-這樣：
-- ✅ 保持 energy layer 的設計原則
-- ✅ IBIS 可以正確處理 non-conjugate
-- ✅ 重用現有的 ansatz 邏輯
-- ✅ 清晰的抽象層次
+This way:
+- ✅ Maintains energy layer design principles
+- ✅ IBIS can correctly handle non-conjugate
+- ✅ Reuses existing ansatz logic
+- ✅ Clear abstraction layers

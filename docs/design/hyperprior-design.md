@@ -1,46 +1,46 @@
-# Hyperprior 設計
+# Hyperprior Design
 
-## 概述
+## Overview
 
-Hyperprior 是對結構超參數 φ 的 prior：
-- `kernel_params`: kernel 超參數
-- `Z`: inducing point 位置
-- `likelihood_params`: likelihood 超參數
+Hyperprior is the prior on structural hyperparameters φ:
+- `kernel_params`: kernel hyperparameters
+- `Z`: inducing point locations
+- `likelihood_params`: likelihood hyperparameters
 
-**重要**：Hyperprior **不是** EnergyTerm，因為它不符合 energy 的定義（見 `docs/design/hyperprior-not-energy.md`）。
+**Important**: Hyperprior is **not** EnergyTerm, because it does not conform to the definition of energy (see `docs/design/hyperprior-not-energy.md`).
 
-## 設計原則
+## Design Principles
 
-1. **Hyperprior 不是 Energy**：
-   - Energy = `E[-log p(y|f,phi)]`（數據相關）
-   - Hyperprior = `-log p(phi)`（數據無關）
+1. **Hyperprior is not Energy**:
+   - Energy = `E[-log p(y|f,phi)]` (data-dependent)
+   - Hyperprior = `-log p(phi)` (data-independent)
 
-2. **通用工具函數**：
-   - 提供工具函數（不是 EnergyTerm）
-   - 可以在所有 inference 方法中使用
+2. **General utility functions**:
+   - Provide utility functions (not EnergyTerm)
+   - Can be used in all inference methods
 
-3. **選擇性應用**：
-   - 不同 kernels/likelihoods 使用不同的參數子集
-   - 通過 `fields` 和 `keys` 參數選擇性應用 priors
+3. **Selective application**:
+   - Different kernels/likelihoods use different parameter subsets
+   - Selectively apply priors through `fields` and `keys` parameters
 
-## 位置
+## Location
 
-Hyperprior 工具函數位於：
+Hyperprior utility functions are located at:
 - `infodynamics_jax/infodynamics/hyperprior.py`
 
-這是在 `infodynamics/` 層次，因為：
-- 所有 inference 方法都需要（MAP2, HMC, NUTS, SMC, IBIS）
-- 不是 energy layer（不符合 energy 定義）
-- 不是單個 inference method（通用工具）
+This is at the `infodynamics/` level, because:
+- All inference methods need it (MAP2, HMC, NUTS, SMC, IBIS)
+- Not energy layer (does not conform to energy definition)
+- Not a single inference method (general utility)
 
 ## API
 
-### 工具函數
+### Utility Functions
 
 ```python
 from infodynamics_jax.infodynamics import make_hyperprior
 
-# 創建 hyperprior 函數
+# Create hyperprior function
 hyperprior = make_hyperprior(
     kernel_log_lambda=0.1,
     kernel_fields=["lengthscale", "variance"],  # RBF kernel
@@ -49,9 +49,9 @@ hyperprior = make_hyperprior(
 )
 ```
 
-### 使用方式
+### Usage
 
-#### 方式 1: 在 runner 層次添加（推薦）
+#### Method 1: Add at runner level (Recommended)
 
 ```python
 from infodynamics_jax.infodynamics import run, make_hyperprior
@@ -68,11 +68,11 @@ out = run(
     energy=target_energy,
     phi_init=phi_init,
     energy_args=(X, Y),
-    hyperprior=hyperprior,  # ✅ 所有方法都支持
+    hyperprior=hyperprior,  # ✅ All methods support
 )
 ```
 
-#### 方式 2: 通過 TargetEnergy.extra 添加
+#### Method 2: Add through TargetEnergy.extra
 
 ```python
 from infodynamics_jax.energy import TargetEnergy
@@ -82,56 +82,56 @@ hyperprior = make_hyperprior(...)
 
 target = TargetEnergy(
     inertial=inertial_energy,
-    extra=[hyperprior],  # 作為 extra term
+    extra=[hyperprior],  # As extra term
 )
 ```
 
-## 處理不同 Kernels/Likelihoods
+## Handling Different Kernels/Likelihoods
 
-### 問題
+### Problem
 
-不同 kernels/likelihoods 使用不同的參數：
+Different kernels/likelihoods use different parameters:
 - **RBF kernel**: `lengthscale`, `variance`
 - **Matern kernel**: `lengthscale`, `variance`, `nu`
 - **Periodic kernel**: `lengthscale`, `variance`, `period`
 - **Gaussian likelihood**: `noise_var`
-- **Bernoulli likelihood**: (可能沒有 hyperparameters)
+- **Bernoulli likelihood**: (may have no hyperparameters)
 
-### 解決方案：選擇性字段/鍵
+### Solution: Selective Fields/Keys
 
-通過 `fields` 和 `keys` 參數選擇性地應用 priors：
+Selectively apply priors through `fields` and `keys` parameters:
 
 ```python
-# RBF kernel: 只對 lengthscale 和 variance 施加 prior
+# RBF kernel: only apply prior to lengthscale and variance
 hyperprior = make_hyperprior(
     kernel_log_lambda=0.1,
-    kernel_fields=["lengthscale", "variance"],  # 只選擇這兩個
+    kernel_fields=["lengthscale", "variance"],  # Only select these two
 )
 
-# Matern kernel: 對 lengthscale, variance, nu 施加 prior
+# Matern kernel: apply prior to lengthscale, variance, nu
 hyperprior = make_hyperprior(
     kernel_log_lambda=0.1,
-    kernel_fields=["lengthscale", "variance", "nu"],  # 包含 nu
+    kernel_fields=["lengthscale", "variance", "nu"],  # Include nu
 )
 
-# Gaussian likelihood: 對 noise_var 施加 prior
+# Gaussian likelihood: apply prior to noise_var
 hyperprior = make_hyperprior(
     likelihood_log_lambda=0.1,
     likelihood_keys=["noise_var"],
 )
 
-# Bernoulli likelihood: 可能不需要 hyperprior（沒有 hyperparameters）
-# 或者可以對其他參數施加 prior（如果有的話）
+# Bernoulli likelihood: may not need hyperprior (no hyperparameters)
+# Or can apply prior to other parameters (if any)
 ```
 
-### 設計原則
+### Design Principles
 
-1. **選擇性應用**：通過 `fields`/`keys` 選擇參數子集
-2. **向後兼容**：如果 `fields`/`keys` 為 None，使用默認值
-3. **類型安全**：使用 `hasattr` 和 `in` 檢查參數是否存在
-4. **模組化**：不同的 prior 類型（L2, log-L2）可以組合
+1. **Selective application**: Select parameter subsets through `fields`/`keys`
+2. **Backward compatible**: If `fields`/`keys` is None, use defaults
+3. **Type safe**: Use `hasattr` and `in` to check if parameters exist
+4. **Modular**: Different prior types (L2, log-L2) can be composed
 
-## 支持的 Prior 類型
+## Supported Prior Types
 
 ### L2 Prior
 
@@ -147,7 +147,7 @@ kernel_log_l2_hyperprior(phi, fields=["lengthscale"], lam=1.0, mu={"lengthscale"
 # = 0.5 * lam * sum((log(lengthscale) - mu) ** 2)
 ```
 
-適合正參數（如 `lengthscale`, `variance`, `noise_var`）。
+Suitable for positive parameters (e.g., `lengthscale`, `variance`, `noise_var`).
 
 ### Z Prior
 
@@ -156,16 +156,16 @@ z_l2_hyperprior(phi, lam=1.0)
 # = 0.5 * lam * sum(phi.Z ** 2)
 ```
 
-## 使用範例
+## Usage Examples
 
-### 完整範例
+### Complete Example
 
 ```python
 from infodynamics_jax.infodynamics import run, make_hyperprior
 from infodynamics_jax.inference.optimisation import MAP2, MAP2CFG
 from infodynamics_jax.energy import TargetEnergy, InertialEnergy
 
-# 創建 hyperprior（根據 kernel/likelihood 選擇參數）
+# Create hyperprior (select parameters based on kernel/likelihood)
 hyperprior = make_hyperprior(
     # RBF kernel priors
     kernel_log_lambda=0.1,
@@ -179,11 +179,11 @@ hyperprior = make_hyperprior(
     z_lambda=0.01,
 )
 
-# 創建 energy
+# Create energy
 inertial = InertialEnergy(...)
 target = TargetEnergy(inertial=inertial)
 
-# MAP2 優化（hyperprior 在 runner 層次添加）
+# MAP2 optimization (hyperprior added at runner level)
 method = MAP2(cfg=MAP2CFG(steps=200, lr=1e-2))
 out = run(
     key=key,
@@ -191,45 +191,45 @@ out = run(
     energy=target,
     phi_init=phi_init,
     energy_args=(X, Y),
-    hyperprior=hyperprior,  # ✅ 所有方法都支持
+    hyperprior=hyperprior,  # ✅ All methods support
 )
 ```
 
-## 擴展性
+## Extensibility
 
-如果需要新的 prior 類型，可以：
-1. 在 `infodynamics/hyperprior.py` 中添加新的 atomic 函數（如 `kernel_l1_hyperprior`）
-2. 在 `make_hyperprior` 中添加對應的參數
-3. 在 `make_hyperprior` 的實現中添加處理邏輯
+If new prior types are needed, can:
+1. Add new atomic functions in `infodynamics/hyperprior.py` (e.g., `kernel_l1_hyperprior`)
+2. Add corresponding parameters in `make_hyperprior`
+3. Add handling logic in `make_hyperprior` implementation
 
-這樣設計保持了：
-- ✅ 通用性（適用於所有 kernels/likelihoods）
-- ✅ 靈活性（選擇性應用）
-- ✅ 可擴展性（易於添加新的 prior 類型）
+This design maintains:
+- ✅ Generality (applicable to all kernels/likelihoods)
+- ✅ Flexibility (selective application)
+- ✅ Extensibility (easy to add new prior types)
 
-## 與舊設計的區別
+## Differences from Old Design
 
-### 舊設計（錯誤）
+### Old Design (Incorrect)
 
 ```python
-# ❌ HyperpriorEnergy 繼承 EnergyTerm
+# ❌ HyperpriorEnergy inherits EnergyTerm
 class HyperpriorEnergy(EnergyTerm):
     ...
 ```
 
-**問題**：
-- Hyperprior 不是 energy
-- 違反了 energy layer 的設計原則
+**Problems**:
+- Hyperprior is not energy
+- Violates energy layer design principles
 
-### 新設計（正確）
+### New Design (Correct)
 
 ```python
-# ✅ 工具函數（不是 EnergyTerm）
+# ✅ Utility function (not EnergyTerm)
 def make_hyperprior(...) -> Callable[[Phi], jnp.ndarray]:
     ...
 ```
 
-**優點**：
-- 符合設計原則（hyperprior 不是 energy）
-- 通用（所有 inference 方法都可以使用）
-- 靈活（可以通過 runner 或 TargetEnergy.extra 添加）
+**Advantages**:
+- Conforms to design principles (hyperprior is not energy)
+- General (all inference methods can use)
+- Flexible (can add through runner or TargetEnergy.extra)

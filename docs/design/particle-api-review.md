@@ -1,50 +1,50 @@
-# Particle Inference API 檢查報告
+# Particle Inference API Review Report
 
-## 結論
+## Conclusion
 
-✅ **所有檔案乾淨，權責清晰分離，API 設計一致**
+✅ **All files are clean, responsibilities are clearly separated, API design is consistent**
 
 ---
 
-## 權責分離
+## Responsibility Separation
 
 ### 1. `annealed.py` - β-annealed SMC
-**權責：**
-- 實現 β-annealing（thermodynamic path）
-- 固定數據集上的溫度退火
+**Responsibilities:**
+- Implements β-annealing (thermodynamic path)
+- Temperature annealing on fixed dataset
 - Weight update: `Δlogw = -Δβ * E(φ)`
 
-**不負責：**
+**Not responsible for:**
 - ❌ Data streaming
 - ❌ IBIS logic
 - ❌ SVGP-specific inference
 
 ### 2. `ibis.py` - IBIS (Iterated Batch Importance Sampling)
-**權責：**
-- 實現 data streaming（Bayesian filtering path）
-- 處理數據流，更新 `p(φ | y_{1:t})`
+**Responsibilities:**
+- Implements data streaming (Bayesian filtering path)
+- Processes data stream, updates `p(φ | y_{1:t})`
 - Weight update: `logw += log p(y_t | φ)`
 
-**不負責：**
+**Not responsible for:**
 - ❌ β-annealing
-- ❌ 固定數據集處理
+- ❌ Fixed dataset processing
 
-### 3. `resampling.py` - SMC 核心工具函數
-**權責：**
-- `multinomial_resample`: 多項式重採樣
-- `effective_sample_size`: ESS 計算
+### 3. `resampling.py` - SMC Core Utility Functions
+**Responsibilities:**
+- `multinomial_resample`: Multinomial resampling
+- `effective_sample_size`: ESS computation
 
-**設計原則：**
-- 只包含純函數，無狀態
-- 可被多個 particle 方法重用
+**Design principles:**
+- Only contains pure functions, stateless
+- Can be reused by multiple particle methods
 
 ---
 
-## API 設計
+## API Design
 
-### `InferenceMethod` Protocol 符合性
+### `InferenceMethod` Protocol Compliance
 
-兩者都實現 `InferenceMethod` protocol，但 `run()` 簽名不同（這是允許的）：
+Both implement the `InferenceMethod` protocol, but `run()` signatures differ (this is allowed):
 
 #### `AnnealedSMC.run()`
 ```python
@@ -59,10 +59,10 @@ def run(
 ) -> SMCRun
 ```
 
-**特點：**
-- 接受 `energy_args`（固定數據集）
-- 不需要 `data_stream`
-- 返回 `SMCRun`（包含 `betas`）
+**Features:**
+- Accepts `energy_args` (fixed dataset)
+- Does not need `data_stream`
+- Returns `SMCRun` (contains `betas`)
 
 #### `IBIS.run()`
 ```python
@@ -77,33 +77,33 @@ def run(
 ) -> IBISRun
 ```
 
-**特點：**
-- 接受 `data_stream`（數據流）
-- 不需要 `energy_args`（數據在 stream 中）
-- 返回 `IBISRun`（包含 `logZ_trace`, `time_steps`）
+**Features:**
+- Accepts `data_stream` (data stream)
+- Does not need `energy_args` (data is in stream)
+- Returns `IBISRun` (contains `logZ_trace`, `time_steps`)
 
-**設計合理性：**
-- ✅ 簽名差異反映方法本質差異
-- ✅ 都遵循 `InferenceMethod` protocol 的精神
-- ✅ 都接受 `energy: EnergyTerm`（核心契約）
+**Design rationale:**
+- ✅ Signature differences reflect essential method differences
+- ✅ Both follow the spirit of `InferenceMethod` protocol
+- ✅ Both accept `energy: EnergyTerm` (core contract)
 
 ---
 
-## 代碼重複處理
+## Code Duplication Handling
 
-### ✅ 已提取到 `resampling.py`
+### ✅ Extracted to `resampling.py`
 - `multinomial_resample()`
 - `effective_sample_size()`
 
-### ✅ 保留差異（合理）
-- `_hmc_kernel()` 在兩個文件中都有，但：
+### ✅ Preserved differences (reasonable)
+- `_hmc_kernel()` exists in both files, but:
   - `annealed.py`: targets `β * E(φ)` (tempered)
   - `ibis.py`: targets `E(φ; y_{1:t})` (full posterior)
-  - 實現差異是必要的，不應合併
+  - Implementation differences are necessary, should not merge
 
 ---
 
-## 導出檢查
+## Export Check
 
 ### `inference/particle/__init__.py`
 ```python
@@ -115,7 +115,7 @@ __all__ = [
     "IBIS", "IBISCFG", "IBISRun",
 ]
 ```
-✅ 正確導出所有公共 API
+✅ Correctly exports all public APIs
 
 ### `inference/__init__.py`
 ```python
@@ -130,61 +130,61 @@ __all__ = [
     "IBIS", "IBISCFG", "IBISRun",
 ]
 ```
-✅ 正確導出到頂層
+✅ Correctly exports to top level
 
 ---
 
-## 文檔完整性
+## Documentation Completeness
 
-### ✅ 模組級 docstring
-- `annealed.py`: 明確說明不是 IBIS，不是 SVGP
-- `ibis.py`: 明確說明與 β-annealing 的區別
+### ✅ Module-level docstring
+- `annealed.py`: Clearly states it is not IBIS, not SVGP
+- `ibis.py`: Clearly states differences from β-annealing
 
-### ✅ 類級 docstring
-- 兩者都清楚說明：
-  - 目標分布
-  - Weight update 公式
-  - 演化軸（thermodynamic vs data streaming）
+### ✅ Class-level docstring
+- Both clearly state:
+  - Target distribution
+  - Weight update formula
+  - Evolution axis (thermodynamic vs data streaming)
 
-### ✅ 方法級 docstring
-- `run()` 方法都有完整的參數說明
-- 關鍵差異都有註釋標註
-
----
-
-## 潛在改進（可選）
-
-### 1. HMC Kernel 共享（低優先級）
-目前兩個 `_hmc_kernel` 實現相似但不同。可以考慮：
-- 提取基礎 HMC 邏輯到共享函數
-- 但保留不同的 energy function wrapper
-- **建議：保持現狀**（差異是必要的）
-
-### 2. 類型提示增強（可選）
-- `data_stream` 可以更明確的類型
-- 但當前 `Union[Iterator, list]` 已經足夠
+### ✅ Method-level docstring
+- `run()` methods have complete parameter descriptions
+- Key differences are annotated
 
 ---
 
-## 總結
+## Potential Improvements (Optional)
 
-### ✅ 權責分離
-- 兩者權責清晰，互不重疊
-- 理論基礎不同（thermodynamic vs Bayesian filtering）
+### 1. HMC Kernel Sharing (Low Priority)
+Currently two `_hmc_kernel` implementations are similar but different. Could consider:
+- Extract base HMC logic to shared function
+- But preserve different energy function wrappers
+- **Recommendation: Keep current state** (differences are necessary)
 
-### ✅ API 設計
-- 符合 `InferenceMethod` protocol
-- 簽名差異反映方法本質
-- 導出完整且一致
+### 2. Type Hint Enhancement (Optional)
+- `data_stream` could have more explicit type
+- But current `Union[Iterator, list]` is sufficient
 
-### ✅ 代碼質量
-- 重複代碼已提取到 `resampling.py`
-- 必要的差異保留（HMC kernel）
-- 文檔完整清晰
+---
 
-### ✅ 架構一致性
-- 都使用 `EnergyTerm` 作為輸入
-- 都遵循相同的設計原則
-- 與整體架構（energy/, core/, infodynamics/）一致
+## Summary
 
-**結論：所有檔案乾淨，權責清晰，API 設計一致且合理。**
+### ✅ Responsibility Separation
+- Both have clear responsibilities, no overlap
+- Different theoretical foundations (thermodynamic vs Bayesian filtering)
+
+### ✅ API Design
+- Complies with `InferenceMethod` protocol
+- Signature differences reflect method essence
+- Exports are complete and consistent
+
+### ✅ Code Quality
+- Duplicated code extracted to `resampling.py`
+- Necessary differences preserved (HMC kernel)
+- Documentation is complete and clear
+
+### ✅ Architectural Consistency
+- Both use `EnergyTerm` as input
+- Both follow same design principles
+- Consistent with overall architecture (energy/, core/, infodynamics/)
+
+**Conclusion: All files are clean, responsibilities are clear, API design is consistent and reasonable.**

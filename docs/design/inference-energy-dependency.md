@@ -1,26 +1,26 @@
-# Inference 層對 Energy 層的依賴
+# Inference Layer's Dependency on Energy Layer
 
-## 當前狀況
+## Current Situation
 
-### Inference 層知道 Energy 嗎？
+### Does Inference Layer Know About Energy?
 
-**是的，但這是設計的一部分，而且是合理的。**
+**Yes, but this is part of the design and is reasonable.**
 
-### 依賴關係
+### Dependency Relationship
 
-1. **Protocol 層次**：
-   - `inference/base.py` 定義了 `InferenceMethod` protocol
-   - 所有 inference 方法都必須接受 `energy: EnergyTerm`
-   - 這是**接口依賴**，不是實現依賴
+1. **Protocol level**:
+   - `inference/base.py` defines `InferenceMethod` protocol
+   - All inference methods must accept `energy: EnergyTerm`
+   - This is **interface dependency**, not implementation dependency
 
-2. **具體實現**：
-   - 所有 inference 方法都導入 `EnergyTerm`：
+2. **Concrete implementation**:
+   - All inference methods import `EnergyTerm`:
      - `sampling/hmc.py`, `mala.py`, `nuts.py`, `slice.py`
      - `optimisation/map2.py`, `vga.py`
      - `particle/annealed.py`, `ibis.py`
-   - 但**只使用 `EnergyTerm` protocol**，不依賴具體實現
+   - But **only use `EnergyTerm` protocol**, do not depend on concrete implementation
 
-### 設計原則（從 `base.py`）
+### Design Principles (from `base.py`)
 
 ```python
 class InferenceMethod(Protocol):
@@ -31,108 +31,108 @@ class InferenceMethod(Protocol):
     """
 ```
 
-## 這是合理的設計嗎？
+## Is This a Reasonable Design?
 
-### ✅ 是的，這是合理的
+### ✅ Yes, this is reasonable
 
-**理由**：
+**Reasons**:
 
-1. **依賴注入模式**：
-   - Inference 需要知道如何調用 energy（通過 protocol）
-   - 但不應該知道 energy 的內部實現
-   - 這是標準的依賴注入模式
+1. **Dependency injection pattern**:
+   - Inference needs to know how to call energy (through protocol)
+   - But should not know energy's internal implementation
+   - This is standard dependency injection pattern
 
-2. **分層清晰**：
-   - `energy/`: 定義 energy landscape
-   - `inference/`: 定義 dynamics（需要知道如何調用 energy）
-   - `infodynamics/`: 組合兩者
+2. **Clear layering**:
+   - `energy/`: Defines energy landscape
+   - `inference/`: Defines dynamics (needs to know how to call energy)
+   - `infodynamics/`: Composes both
 
-3. **符合設計原則**：
-   - Inference 只依賴 `EnergyTerm` protocol（接口）
-   - 不依賴具體實現（如 `InertialEnergy`, `TargetEnergy`）
-   - 這是**接口隔離原則**的正確應用
+3. **Conforms to design principles**:
+   - Inference only depends on `EnergyTerm` protocol (interface)
+   - Does not depend on concrete implementation (e.g., `InertialEnergy`, `TargetEnergy`)
+   - This is correct application of **interface segregation principle**
 
-### ❌ 不應該有的依賴
+### ❌ Dependencies That Should Not Exist
 
-檢查結果顯示，inference 層**沒有**以下不當依賴：
-- ❌ 沒有直接導入 `InertialEnergy`
-- ❌ 沒有直接導入 `TargetEnergy`
-- ❌ 沒有直接導入 `PriorEnergy`
-- ❌ 沒有檢查 energy 的內部結構
+Check results show inference layer **does not have** the following inappropriate dependencies:
+- ❌ Does not directly import `InertialEnergy`
+- ❌ Does not directly import `TargetEnergy`
+- ❌ Does not directly import `PriorEnergy`
+- ❌ Does not inspect energy's internal structure
 
-**所有 inference 方法都只使用 `EnergyTerm` protocol**。
+**All inference methods only use `EnergyTerm` protocol**.
 
-## 對比：如果 Inference 不知道 Energy
+## Comparison: If Inference Doesn't Know About Energy
 
-### 選項 1: Inference 不知道 Energy（不推薦）
+### Option 1: Inference Doesn't Know About Energy (Not Recommended)
 
 ```python
-# 如果 inference 不知道 energy
+# If inference doesn't know about energy
 class InferenceMethod(Protocol):
     def run(self, objective_fn: Callable, *args, **kwargs) -> Any:
-        # 使用通用的 Callable，而不是 EnergyTerm
+        # Use generic Callable, not EnergyTerm
         ...
 ```
 
-**問題**：
-- ❌ 失去類型安全
-- ❌ 無法表達「這是 energy」的語義
-- ❌ 無法在 protocol 層次定義契約
+**Problems**:
+- ❌ Lose type safety
+- ❌ Cannot express "this is energy" semantics
+- ❌ Cannot define contract at protocol level
 
-### 選項 2: Inference 知道 Energy Protocol（當前設計，推薦）
+### Option 2: Inference Knows Energy Protocol (Current Design, Recommended)
 
 ```python
-# 當前設計
+# Current design
 class InferenceMethod(Protocol):
     def run(self, energy: EnergyTerm, *args, **kwargs) -> Any:
-        # 明確表達：這是 energy，不是任意函數
+        # Clearly express: this is energy, not arbitrary function
         ...
 ```
 
-**優點**：
-- ✅ 類型安全
-- ✅ 語義清晰（這是 energy，不是任意函數）
-- ✅ 可以在 protocol 層次定義契約
-- ✅ 仍然保持抽象（不依賴具體實現）
+**Advantages**:
+- ✅ Type safe
+- ✅ Clear semantics (this is energy, not arbitrary function)
+- ✅ Can define contract at protocol level
+- ✅ Still maintains abstraction (does not depend on concrete implementation)
 
-## 結論
+## Conclusion
 
-### 當前設計是正確的
+### Current Design is Correct
 
-1. **Inference 知道 Energy Protocol**：
-   - ✅ 這是必要的（需要知道如何調用）
-   - ✅ 這是接口依賴，不是實現依賴
-   - ✅ 符合依賴注入模式
+1. **Inference knows Energy Protocol**:
+   - ✅ This is necessary (needs to know how to call)
+   - ✅ This is interface dependency, not implementation dependency
+   - ✅ Conforms to dependency injection pattern
 
-2. **Inference 不知道 Energy 實現**：
-   - ✅ 不依賴 `InertialEnergy`, `TargetEnergy` 等具體類
-   - ✅ 只使用 `EnergyTerm` protocol
-   - ✅ 將 energy 視為黑盒
+2. **Inference doesn't know Energy implementation**:
+   - ✅ Does not depend on concrete classes like `InertialEnergy`, `TargetEnergy`
+   - ✅ Only uses `EnergyTerm` protocol
+   - ✅ Treats energy as black box
 
-3. **分層清晰**：
-   - `energy/`: 定義 energy landscape（實現）
-   - `inference/`: 定義 dynamics（使用 energy protocol）
-   - `infodynamics/`: 組合兩者（orchestration）
+3. **Clear layering**:
+   - `energy/`: Defines energy landscape (implementation)
+   - `inference/`: Defines dynamics (uses energy protocol)
+   - `infodynamics/`: Composes both (orchestration)
 
-### 設計原則總結
+### Design Principle Summary
 
 ```
-energy/          → 定義 EnergyTerm protocol + 實現
+energy/          → Defines EnergyTerm protocol + implementation
      ↓ (protocol dependency)
-inference/       → 使用 EnergyTerm protocol（黑盒）
+inference/       → Uses EnergyTerm protocol (black box)
      ↓ (composition)
-infodynamics/    → 組合 energy + inference
+infodynamics/    → Composes energy + inference
 ```
 
-這是**正確的分層架構**：
-- 上層可以依賴下層的**接口**（protocol）
-- 上層不應該依賴下層的**實現**（具體類）
+This is **correct layered architecture**:
+- Upper layer can depend on lower layer's **interface** (protocol)
+- Upper layer should not depend on lower layer's **implementation** (concrete classes)
 
-## 檢查結果
+## Check Results
 
-所有 inference 方法都：
-- ✅ 只導入 `EnergyTerm`（protocol）
-- ✅ 不導入具體實現（如 `InertialEnergy`, `TargetEnergy`）
-- ✅ 將 energy 視為黑盒（只調用，不檢查內部）
+All inference methods:
+- ✅ Only import `EnergyTerm` (protocol)
+- ✅ Do not import concrete implementation (e.g., `InertialEnergy`, `TargetEnergy`)
+- ✅ Treat energy as black box (only call, do not inspect internal)
 
-**結論：當前設計是正確的，不需要修改。**
+**Conclusion: Current design is correct, no need to modify.**

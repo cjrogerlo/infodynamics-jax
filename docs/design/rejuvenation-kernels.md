@@ -1,50 +1,50 @@
-# Rejuvenation Kernels 設計
+# Rejuvenation Kernels Design
 
-## 當前狀況
+## Current Situation
 
-### 已實現的 Rejuvenation Kernels
+### Implemented Rejuvenation Kernels
 
-目前只有 **HMC** 作為 rejuvenation kernel：
+Currently only **HMC** as a rejuvenation kernel:
 
 1. **`annealed.py`**:
-   - `_hmc_kernel()`: 內部實現的 HMC kernel
-   - 目標：tempered energy `U_beta = beta * E(phi)`
-   - 配置：`rejuvenation: str = "hmc"`
+   - `_hmc_kernel()`: Internally implemented HMC kernel
+   - Target: tempered energy `U_beta = beta * E(phi)`
+   - Configuration: `rejuvenation: str = "hmc"`
 
 2. **`ibis.py`**:
-   - `_hmc_kernel()`: 內部實現的 HMC kernel
-   - 目標：full posterior `p(phi | y_{1:t})`
-   - 配置：`rejuvenation: str = "hmc"` 或 `None`
+   - `_hmc_kernel()`: Internally implemented HMC kernel
+   - Target: full posterior `p(phi | y_{1:t})`
+   - Configuration: `rejuvenation: str = "hmc"` or `None`
 
-### 問題
+### Problems
 
-1. **代碼重複**：
-   - `annealed.py` 和 `ibis.py` 都有各自的 `_hmc_kernel` 實現
-   - 兩個實現幾乎相同，只是 energy 的處理略有不同
+1. **Code duplication**:
+   - Both `annealed.py` and `ibis.py` have their own `_hmc_kernel` implementations
+   - The two implementations are almost identical, only energy handling is slightly different
 
-2. **缺少其他 kernels**：
-   - 沒有 MALA, NUTS, Slice 等作為 rejuvenation kernels
-   - 但 `inference/sampling/` 中已經有這些實現
+2. **Missing other kernels**:
+   - No MALA, NUTS, Slice, etc. as rejuvenation kernels
+   - But these are already implemented in `inference/sampling/`
 
-3. **無法重用**：
-   - `inference/sampling/` 中的 kernels 是作為 `InferenceMethod` 實現的
-   - 不是直接可重用的 kernel 函數
+3. **Cannot reuse**:
+   - Kernels in `inference/sampling/` are implemented as `InferenceMethod`
+   - Not directly reusable kernel functions
 
-## 設計選項
+## Design Options
 
-### 選項 1: 保持現狀（簡單但重複）
+### Option 1: Keep Current State (Simple but Duplicated)
 
-**優點**：
-- ✅ 簡單，不需要重構
-- ✅ 每個方法可以獨立調整 kernel
+**Advantages**:
+- ✅ Simple, no refactoring needed
+- ✅ Each method can independently adjust kernel
 
-**缺點**：
-- ❌ 代碼重複
-- ❌ 無法重用其他 kernels（MALA, NUTS, Slice）
+**Disadvantages**:
+- ❌ Code duplication
+- ❌ Cannot reuse other kernels (MALA, NUTS, Slice)
 
-### 選項 2: 提取共享的 Rejuvenation Kernel 模組（推薦）
+### Option 2: Extract Shared Rejuvenation Kernel Module (Recommended)
 
-創建 `inference/particle/rejuvenation.py`：
+Create `inference/particle/rejuvenation.py`:
 
 ```python
 # inference/particle/rejuvenation.py
@@ -70,51 +70,51 @@ def nuts_rejuvenate(key, particles, energy_fn, step_size, n_steps):
     ...
 ```
 
-**優點**：
-- ✅ 消除代碼重複
-- ✅ 可以添加多種 rejuvenation kernels
-- ✅ 可以重用 `inference/sampling/` 中的邏輯
+**Advantages**:
+- ✅ Eliminates code duplication
+- ✅ Can add various rejuvenation kernels
+- ✅ Can reuse logic from `inference/sampling/`
 
-**缺點**：
-- ⚠️ 需要重構現有代碼
+**Disadvantages**:
+- ⚠️ Requires refactoring existing code
 
-### 選項 3: 重用 `inference/sampling/` 中的 Kernels
+### Option 3: Reuse Kernels from `inference/sampling/`
 
-**問題**：
-- `inference/sampling/` 中的 kernels 是 `InferenceMethod`，不是函數
-- 它們的接口是 `run(energy, phi_init, ...)`，不是 `kernel(key, particles, ...)`
+**Problem**:
+- Kernels in `inference/sampling/` are `InferenceMethod`, not functions
+- Their interface is `run(energy, phi_init, ...)`, not `kernel(key, particles, ...)`
 
-**解決方案**：
-- 提取 `inference/sampling/` 中的核心 kernel 邏輯為函數
-- 或創建 adapter 將 `InferenceMethod` 轉換為 rejuvenation kernel
+**Solution**:
+- Extract core kernel logic from `inference/sampling/` as functions
+- Or create adapter to convert `InferenceMethod` to rejuvenation kernel
 
-**優點**：
-- ✅ 最大化代碼重用
-- ✅ 統一所有 MCMC kernels
+**Advantages**:
+- ✅ Maximizes code reuse
+- ✅ Unifies all MCMC kernels
 
-**缺點**：
-- ⚠️ 需要較大的重構
-- ⚠️ 可能過度設計
+**Disadvantages**:
+- ⚠️ Requires larger refactoring
+- ⚠️ May be over-engineered
 
-## 推薦方案
+## Recommended Approach
 
-**選項 2（提取共享模組）**，原因：
+**Option 2 (Extract Shared Module)**, because:
 
-1. **適度的抽象**：
-   - 不需要重構整個 `inference/sampling/`
-   - 只需要提取 rejuvenation 需要的部分
+1. **Moderate abstraction**:
+   - Don't need to refactor entire `inference/sampling/`
+   - Only need to extract parts needed for rejuvenation
 
-2. **清晰的職責**：
-   - `inference/sampling/`: 獨立的 MCMC 方法
-   - `inference/particle/rejuvenation.py`: SMC 中的 rejuvenation kernels
+2. **Clear responsibilities**:
+   - `inference/sampling/`: Standalone MCMC methods
+   - `inference/particle/rejuvenation.py`: Rejuvenation kernels in SMC
 
-3. **易於擴展**：
-   - 可以輕鬆添加新的 rejuvenation kernels
-   - 不需要修改 `inference/sampling/`
+3. **Easy to extend**:
+   - Can easily add new rejuvenation kernels
+   - Don't need to modify `inference/sampling/`
 
-## 實現建議
+## Implementation Suggestions
 
-### 1. 創建 `rejuvenation.py`
+### 1. Create `rejuvenation.py`
 
 ```python
 # inference/particle/rejuvenation.py
@@ -147,13 +147,13 @@ def hmc_rejuvenate(
     ...
 ```
 
-### 2. 更新 `annealed.py` 和 `ibis.py`
+### 2. Update `annealed.py` and `ibis.py`
 
 ```python
 # annealed.py
 from .rejuvenation import hmc_rejuvenate
 
-# 在 run() 中：
+# In run():
 if rejuvenation == "hmc":
     def energy_fn(phi):
         return beta * energy(phi, *energy_args, **energy_kwargs)
@@ -165,17 +165,17 @@ if rejuvenation == "hmc":
     )
 ```
 
-### 3. 添加其他 Kernels（可選）
+### 3. Add Other Kernels (Optional)
 
 ```python
-# 未來可以添加：
+# Can add in the future:
 if rejuvenation == "mala":
     particles = mala_rejuvenate(...)
 elif rejuvenation == "nuts":
     particles = nuts_rejuvenate(...)
 ```
 
-## 配置更新
+## Configuration Updates
 
 ```python
 @dataclass(frozen=True)
@@ -187,13 +187,13 @@ class AnnealedSMCCFG:
     n_leapfrog: int = 4  # For HMC
 ```
 
-## 結論
+## Conclusion
 
-**當前狀況**：
-- ✅ 只有 HMC 作為 rejuvenation kernel
-- ❌ 代碼重複（`annealed.py` 和 `ibis.py` 都有 `_hmc_kernel`）
+**Current situation**:
+- ✅ Only HMC as rejuvenation kernel
+- ❌ Code duplication (`annealed.py` and `ibis.py` both have `_hmc_kernel`)
 
-**建議**：
-- 創建 `inference/particle/rejuvenation.py` 提取共享邏輯
-- 未來可以添加 MALA, NUTS 等作為選項
-- 保持與 `inference/sampling/` 的獨立性（不同的使用場景）
+**Recommendation**:
+- Create `inference/particle/rejuvenation.py` to extract shared logic
+- Can add MALA, NUTS, etc. as options in the future
+- Keep independence from `inference/sampling/` (different use cases)

@@ -1,93 +1,93 @@
-# Utils 設計哲學
+# Utils Design Philosophy
 
-## 當前 Utils
+## Current Utils
 
 ### 1. `inference/particle/resampling.py`
-- `multinomial_resample`: SMC 核心需要的重採樣函數
-- `effective_sample_size`: SMC 核心需要的 ESS 計算
+- `multinomial_resample`: Resampling function needed for SMC core
+- `effective_sample_size`: ESS computation needed for SMC core
 
-**這些是 SMC 算法專用的核心工具，不是 problem-specific。**
+**These are core utilities specific to SMC algorithms, not problem-specific.**
 
 ### 2. `gp/kernels/utils.py`
-- `scaled_sqdist`: Kernel 計算的內部工具函數
+- `scaled_sqdist`: Internal utility function for kernel computation
 
-**這是模型層次需要的，不是 problem-specific。**
+**This is needed at the model level, not problem-specific.**
 
-## 不應該添加的 Utils
+## Utils That Should Not Be Added
 
 ### Plotting / Visualization
-**理由**：
-- ❌ 非常 problem-specific（不同問題需要不同的圖表）
-- ❌ 增加依賴（matplotlib, seaborn 等）
-- ❌ 違反「庫應該輕量」的原則
-- ✅ 用戶可以在 `examples/` 或自己的代碼中使用外部庫
+**Reasons**:
+- ❌ Very problem-specific (different problems need different plots)
+- ❌ Adds dependencies (matplotlib, seaborn, etc.)
+- ❌ Violates "library should be lightweight" principle
+- ✅ Users can use external libraries in `examples/` or their own code
 
-**建議**：
-- 在 `examples/` 中展示如何使用 matplotlib/seaborn 進行可視化
-- 不應該在核心庫中提供 plotting 工具
+**Recommendation**:
+- Show how to use matplotlib/seaborn for visualization in `examples/`
+- Should not provide plotting tools in core library
 
 ### Metrics / Evaluation
-**理由**：
-- ❌ 非常 problem-specific（不同問題需要不同的 metrics）
-- ❌ 增加依賴（scikit-learn 等）
-- ❌ 違反「庫應該專注於 inference」的原則
-- ✅ 用戶可以在自己的代碼中計算 metrics
+**Reasons**:
+- ❌ Very problem-specific (different problems need different metrics)
+- ❌ Adds dependencies (scikit-learn, etc.)
+- ❌ Violates "library should focus on inference" principle
+- ✅ Users can compute metrics in their own code
 
-**建議**：
-- 在 `examples/` 中展示如何計算常見 metrics（如 RMSE, accuracy 等）
-- 不應該在核心庫中提供 metrics 工具
+**Recommendation**:
+- Show how to compute common metrics (e.g., RMSE, accuracy) in `examples/`
+- Should not provide metrics tools in core library
 
-### Diagnostics 擴展
-**當前設計**：
-- `runner.py` 已經提供基本的 diagnostics（`accept_rate`, `energy_trace`, `grad_norm_trace`）
-- 這些是**通用的、算法層次的** diagnostics
+### Diagnostics Extensions
+**Current design**:
+- `runner.py` already provides basic diagnostics (`accept_rate`, `energy_trace`, `grad_norm_trace`)
+- These are **general, algorithm-level** diagnostics
 
-**不應該添加**：
-- ❌ Problem-specific diagnostics（如 regression metrics, classification metrics）
-- ❌ 複雜的診斷工具（這些應該在用戶代碼中）
+**Should not add**:
+- ❌ Problem-specific diagnostics (e.g., regression metrics, classification metrics)
+- ❌ Complex diagnostic tools (these should be in user code)
 
-## 設計原則
+## Design Principles
 
-### 應該包含的 Utils
-1. **算法核心需要的**（如 `multinomial_resample`, `effective_sample_size`）
-2. **模型計算需要的**（如 `scaled_sqdist`）
-3. **通用的、非 problem-specific 的**
+### Utils That Should Be Included
+1. **Needed for algorithm core** (e.g., `multinomial_resample`, `effective_sample_size`)
+2. **Needed for model computation** (e.g., `scaled_sqdist`)
+3. **General, non-problem-specific**
 
-### 不應該包含的 Utils
-1. **Plotting / Visualization**（problem-specific）
-2. **Metrics / Evaluation**（problem-specific）
-3. **複雜的診斷工具**（應該在用戶代碼中）
+### Utils That Should Not Be Included
+1. **Plotting / Visualization** (problem-specific)
+2. **Metrics / Evaluation** (problem-specific)
+3. **Complex diagnostic tools** (should be in user code)
 
-## 建議的結構
+## Suggested Structure
 
 ```
 infodynamics_jax/
-  ├── inference/particle/resampling.py  ✅ SMC 核心工具
-  ├── gp/kernels/utils.py               ✅ 模型計算工具
-  └── (不應該有)
-      ├── utils/plotting.py        ❌ 不應該
-      ├── utils/metrics.py         ❌ 不應該
-      └── utils/diagnostics.py     ❌ 不應該（已有 runner.py 的基本 diagnostics）
+  ├── inference/particle/resampling.py  ✅ SMC core utilities
+  ├── gp/kernels/utils.py               ✅ Model computation utilities
+  └── (should not have)
+      ├── utils/plotting.py        ❌ Should not
+      ├── utils/metrics.py         ❌ Should not
+      └── utils/diagnostics.py     ❌ Should not (already have basic diagnostics in runner.py)
 
 examples/
-  ├── ibis_annealed_smc.py         ✅ 可以包含簡單的 plotting 示例
-  └── (可以添加)
-      ├── plot_results.py          ✅ 展示如何使用 matplotlib
-      └── compute_metrics.py       ✅ 展示如何計算 metrics
+  ├── ibis_annealed_smc.py         ✅ Can include simple plotting examples
+  └── (can add)
+      ├── plot_results.py          ✅ Show how to use matplotlib
+      └── compute_metrics.py       ✅ Show how to compute metrics
 ```
 
-## 結論
+## Conclusion
 
-**當前設計是正確的**：
-- ✅ 只包含算法/模型核心需要的 utils
-- ✅ 保持庫的輕量和通用性
-- ✅ 不包含 problem-specific 的工具
+**Current design is correct**:
+- ✅ Only includes utils needed for algorithm/model core
+- ✅ Keeps library lightweight and general
+- ✅ Does not include problem-specific tools
 
-**如果用戶需要 plotting/metrics**：
-- 在 `examples/` 中提供示例
-- 或在自己的代碼中使用外部庫（matplotlib, seaborn, scikit-learn 等）
+**If users need plotting/metrics**:
+- Provide examples in `examples/`
+- Or use external libraries in their own code (matplotlib, seaborn, scikit-learn, etc.)
 
-**這符合庫的設計原則**：
-- 專注於 inference dynamics
-- 不假設特定的問題類型
-- 保持輕量和可組合
+**This conforms to the library's design principles**:
+- Focus on inference dynamics
+- Do not assume specific problem types
+- Keep lightweight and composable
