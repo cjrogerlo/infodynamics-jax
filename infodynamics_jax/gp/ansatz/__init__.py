@@ -12,6 +12,7 @@ from .expected import (
     expected_nll_factorised_mc,
 )
 from .gh import GaussHermite
+from .mc import MonteCarlo
 
 __all__ = [
     "VariationalState",
@@ -19,4 +20,5 @@ __all__ = [
     "expected_nll_factorised_gh",
     "expected_nll_factorised_mc",
     "GaussHermite",
+    "MonteCarlo",
 ]

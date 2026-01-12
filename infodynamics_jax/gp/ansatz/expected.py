@@ -153,30 +153,19 @@ def expected_nll_factorised_mc(phi, X, Y, kernel_fn, state: VariationalState,
     Disadvantage: variance; but jit/vmap-friendly and works universally.
 
     Implementation: sample eps ~ N(0,1), f = mu + sqrt(var)*eps.
+    
+    Note: This function is a convenience wrapper around MonteCarlo class.
+    For new code, consider using MonteCarlo directly.
     """
-    Y = _as_2d(Y)
-
-    if state.cov_type != "full" or state.L_u is None:
-        raise ValueError("expected_nll_factorised_mc currently expects full-cov state with L_u.")
-
-    mu_f, var_f = qfi_from_qu_full(phi, X, kernel_fn, state.m_u, state.L_u)  # (N,D)
-    var_f = jnp.clip(var_f, a_min=0.0)
-
-    if nll_1d_fn.__name__ == "neg_loglik_1d" and hasattr(phi, "likelihood_params"):
-        noise_var = phi.likelihood_params.get("noise_var", None)
-        if noise_var is not None:
-            return jnp.sum(
-                expected_nll_gaussian_1d(Y, mu_f, var_f, noise_var)
-            )
-
-    N, D = Y.shape
-    eps = jax.random.normal(key, shape=(n_samples, N, D), dtype=mu_f.dtype)
-    f_samps = mu_f[None, :, :] + jnp.sqrt(var_f[None, :, :]) * eps  # (S,N,D)
-
-    # average over samples
-    def nll_of_sample(f):
-        # sum over N,D
-        return jnp.sum(jax.vmap(lambda yi, fi: jnp.sum(jax.vmap(lambda yijd, fijd: nll_1d_fn(yijd, fijd, phi))(yi, fi)))(Y, f))
-
-    vals = jax.vmap(nll_of_sample)(f_samps)  # (S,)
-    return jnp.mean(vals)
+    from .mc import MonteCarlo
+    
+    mc = MonteCarlo(n_samples=n_samples)
+    return mc.expect_nll_factorised(
+        phi=phi,
+        X=X,
+        Y=Y,
+        kernel_fn=kernel_fn,
+        state=state,
+        nll_1d_fn=nll_1d_fn,
+        key=key,
+    )
