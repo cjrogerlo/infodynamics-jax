@@ -39,17 +39,22 @@ from ...energy.base import EnergyTerm
 from ..base import InferenceMethod
 from .resampling import multinomial_resample, effective_sample_size
 from .rejuvenation import hmc_rejuvenate, mala_rejuvenate, nuts_rejuvenate
+from .schedules import make_beta_schedule
 
 
 @dataclass(frozen=True)
 class AnnealedSMCCFG:
     """Configuration for annealed SMC."""
     n_particles: int = 128
-    betas: Optional[jnp.ndarray] = None
+    betas: Optional[jnp.ndarray] = None  # If provided, overrides schedule_type
     n_steps: int = 32
+    schedule_type: str = "linear"  # "linear", "geometric", "power"
+    schedule_kwargs: Optional[dict] = None  # Additional args for schedule (e.g., alpha, power)
     ess_threshold: float = 0.5
     rejuvenation: str = "hmc"  # "hmc", "mala", "nuts", or None
     rejuvenation_steps: int = 1
+    step_size: float = 1e-2  # For HMC/MALA/NUTS rejuvenation
+    n_leapfrog: int = 4  # For HMC rejuvenation
     jit: bool = True
 
 
@@ -123,10 +128,18 @@ class AnnealedSMC(InferenceMethod):
         rejuvenation = cfg.rejuvenation
         jit = cfg.jit
 
-        if cfg.betas is None:
-            betas = jnp.linspace(0.0, 1.0, n_steps + 1)
-        else:
+        # Generate beta schedule
+        if cfg.betas is not None:
             betas = cfg.betas
+        else:
+            schedule_kwargs = cfg.schedule_kwargs or {}
+            betas = make_beta_schedule(
+                schedule_type=cfg.schedule_type,
+                n_steps=n_steps,
+                beta_min=0.0,
+                beta_max=1.0,
+                **schedule_kwargs
+            )
 
         particles = init_particles_fn(key, n_particles)
         logw = jnp.zeros(n_particles)
@@ -147,16 +160,26 @@ class AnnealedSMC(InferenceMethod):
                 return energy(phi, *energy_args, **energy_kwargs)
 
             energies = jax.vmap(energy_eval)(particles)
-            logw = logw - delta_beta * energies  # β-annealing: thermodynamic path
-
+            
+            # Incremental weights: Δlogw = -(beta_t - beta_{t-1}) * E(phi)
+            # This is the CORRECT incremental weight for this step
+            delta_logw = -delta_beta * energies
+            
+            # Update cumulative log weights
+            logw = logw + delta_logw
+            
+            # Compute ESS from normalized weights
             max_logw = jnp.max(logw)
             w_norm = jnp.exp(logw - max_logw)
             w_norm = w_norm / jnp.sum(w_norm)
             ess = 1.0 / jnp.sum(w_norm ** 2)
             ess_trace = jnp.array(ess)
 
-            # Update logZ_est (log normalizing constant estimate)
-            logZ_est = logZ_est + max_logw + jnp.log(jnp.sum(jnp.exp(logw - max_logw))) - jnp.log(n_particles)
+            # CORRECT logZ update: use incremental weights, not cumulative logw
+            # logZ increment = log mean exp of incremental weights
+            max_delta_logw = jnp.max(delta_logw)
+            logZ_increment = max_delta_logw + jnp.log(jnp.mean(jnp.exp(delta_logw - max_delta_logw)))
+            logZ_est = logZ_est + logZ_increment
 
             # Resample if ESS < threshold
             def resample_particles(particles, logw, key):
@@ -187,7 +210,7 @@ class AnnealedSMC(InferenceMethod):
                     step_size=cfg.step_size,
                     n_leapfrog=cfg.n_leapfrog,
                     n_steps=cfg.rejuvenation_steps,
-                    jit=cfg.jit,
+                    jit=jit,
                 )
             elif rejuvenation == "mala":
                 key_rejuv = random.fold_in(key, t + 10000)
@@ -200,7 +223,7 @@ class AnnealedSMC(InferenceMethod):
                     energy_fn,
                     step_size=cfg.step_size,
                     n_steps=cfg.rejuvenation_steps,
-                    jit=cfg.jit,
+                    jit=jit,
                 )
             elif rejuvenation == "nuts":
                 key_rejuv = random.fold_in(key, t + 10000)
@@ -215,7 +238,7 @@ class AnnealedSMC(InferenceMethod):
                     max_tree_depth=getattr(cfg, "max_tree_depth", 10),
                     delta_max=getattr(cfg, "delta_max", 1000.0),
                     n_steps=cfg.rejuvenation_steps,
-                    jit=cfg.jit,
+                    jit=jit,
                 )
 
             return (particles, logw, logZ_est), ess_trace
