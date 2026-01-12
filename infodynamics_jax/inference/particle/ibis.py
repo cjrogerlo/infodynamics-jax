@@ -207,6 +207,7 @@ class IBIS(InferenceMethod):
         key, subkey = random.split(key)
         particles = init_particles_fn(subkey, n_particles)
         logw = jnp.zeros(n_particles)
+        logZ_est = 0.0  # Initialize logZ_est, will be accumulated across steps
         accumulated_data = None  # Will accumulate data as we process batches
         
         # Convert data_stream to list if iterator
@@ -220,8 +221,11 @@ class IBIS(InferenceMethod):
         logZ_trace = jnp.zeros(n_steps)
         
         def step_fn(carry, t_and_batch):
-            particles, logw, logZ_est, accumulated_data = carry
+            particles, logw, logZ_est, accumulated_data, key = carry
             t, batch = t_and_batch
+            
+            # Split keys for this step
+            key, key_resample, key_rejuv = random.split(key, 3)
             
             # IBIS weight update: logw += log p(y_t | φ)
             # This is the KEY difference from β-annealed SMC
@@ -233,6 +237,13 @@ class IBIS(InferenceMethod):
                 log_likelihood_fn=log_likelihood_fn,
                 energy_kwargs=energy_kwargs,
             )
+            
+            # Store normalized weights BEFORE resampling for logZ calculation
+            # This is needed for correct IBIS evidence estimation
+            max_logw_prev = jnp.max(logw)
+            w_prev_norm = jnp.exp(logw - max_logw_prev)
+            w_prev_norm = w_prev_norm / jnp.sum(w_prev_norm)
+            
             logw = logw + log_likelihood_increment  # DATA UPDATE, not β-annealing
             
             # Accumulate data for rejuvenation (targets p(φ | y_{1:t}))
@@ -252,8 +263,13 @@ class IBIS(InferenceMethod):
             ess = 1.0 / jnp.sum(w_norm ** 2)
             ess_trace = jnp.array(ess)
             
-            # Update logZ estimate (cumulative log evidence)
-            logZ_est = logZ_est + max_logw + jnp.log(jnp.sum(jnp.exp(logw - max_logw))) - jnp.log(n_particles)
+            # CORRECT logZ update for IBIS:
+            # Incremental normalizer = log sum_i (w_{t-1,i} * exp(log_likelihood_increment_i))
+            # This accounts for the weighted average of likelihood increments
+            weighted_loglik = log_likelihood_increment + jnp.log(w_prev_norm + 1e-10)  # Add small epsilon for numerical stability
+            max_weighted_loglik = jnp.max(weighted_loglik)
+            logZ_increment = max_weighted_loglik + jnp.log(jnp.sum(jnp.exp(weighted_loglik - max_weighted_loglik)))
+            logZ_est = logZ_est + logZ_increment  # Accumulate across steps
             logZ_trace = jnp.array(logZ_est)
             
             # Resample if ESS < threshold
@@ -263,7 +279,6 @@ class IBIS(InferenceMethod):
                 logw_resampled = jnp.zeros_like(logw)
                 return particles_resampled, logw_resampled
             
-            key_resample = random.fold_in(key, t)
             do_resample = ess < ess_threshold * n_particles
             particles, logw = jax.lax.cond(
                 do_resample,
@@ -274,7 +289,6 @@ class IBIS(InferenceMethod):
             
             # Rejuvenation step (targets p(φ | y_{1:t}), not tempered distribution)
             if rejuvenation == "hmc":
-                key_rejuv = random.fold_in(key, t + 10000)
                 # Target full posterior: p(φ | y_{1:t})
                 def energy_fn(phi):
                     return energy(phi, accumulated_data.X, accumulated_data.Y, **energy_kwargs)
@@ -288,7 +302,6 @@ class IBIS(InferenceMethod):
                     jit=cfg.jit,
                 )
             elif rejuvenation == "mala":
-                key_rejuv = random.fold_in(key, t + 10000)
                 # Target full posterior: p(φ | y_{1:t})
                 def energy_fn(phi):
                     return energy(phi, accumulated_data.X, accumulated_data.Y, **energy_kwargs)
@@ -301,7 +314,6 @@ class IBIS(InferenceMethod):
                     jit=cfg.jit,
                 )
             elif rejuvenation == "nuts":
-                key_rejuv = random.fold_in(key, t + 10000)
                 # Target full posterior: p(φ | y_{1:t})
                 def energy_fn(phi):
                     return energy(phi, accumulated_data.X, accumulated_data.Y, **energy_kwargs)
@@ -316,14 +328,14 @@ class IBIS(InferenceMethod):
                     jit=cfg.jit,
                 )
             
-            return (particles, logw, logZ_est, accumulated_data), (ess_trace, logZ_trace)
+            return (particles, logw, logZ_est, accumulated_data, key), (ess_trace, logZ_trace)
         
         # Process data stream
         ess_trace_list = []
         logZ_trace_list = []
         for t, batch in enumerate(data_batches):
-            (particles, logw, logZ_est, accumulated_data), (ess_t, logZ_t) = step_fn(
-                (particles, logw, 0.0, accumulated_data), (t, batch)
+            (particles, logw, logZ_est, accumulated_data, key), (ess_t, logZ_t) = step_fn(
+                (particles, logw, logZ_est, accumulated_data, key), (t, batch)
             )
             ess_trace_list.append(ess_t)
             logZ_trace_list.append(logZ_t)

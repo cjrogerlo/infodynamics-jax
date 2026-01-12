@@ -141,17 +141,22 @@ class AnnealedSMC(InferenceMethod):
                 **schedule_kwargs
             )
 
-        particles = init_particles_fn(key, n_particles)
+        # Split key for initialization
+        key, subkey = random.split(key)
+        particles = init_particles_fn(subkey, n_particles)
         logw = jnp.zeros(n_particles)
         ess_trace = jnp.zeros(n_steps)
 
         logZ_est = 0.0
 
         def step_fn(carry, t):
-            particles, logw, logZ_est = carry
+            particles, logw, logZ_est, key = carry
             beta_prev = betas[t]
             beta_curr = betas[t + 1]
             delta_beta = beta_curr - beta_prev
+
+            # Split keys for this step
+            key, key_resample, key_rejuv = random.split(key, 3)
 
             # Incremental weights: Δlogw = -(beta_t - beta_{t-1}) * E(phi)
             # This is THERMODYNAMIC integration (path sampling), NOT data update.
@@ -165,6 +170,12 @@ class AnnealedSMC(InferenceMethod):
             # This is the CORRECT incremental weight for this step
             delta_logw = -delta_beta * energies
             
+            # Store normalized weights BEFORE resampling for logZ calculation
+            # This is the correct way to compute incremental normalizer in annealed SMC
+            max_logw_prev = jnp.max(logw)
+            w_prev_norm = jnp.exp(logw - max_logw_prev)
+            w_prev_norm = w_prev_norm / jnp.sum(w_prev_norm)
+            
             # Update cumulative log weights
             logw = logw + delta_logw
             
@@ -175,10 +186,13 @@ class AnnealedSMC(InferenceMethod):
             ess = 1.0 / jnp.sum(w_norm ** 2)
             ess_trace = jnp.array(ess)
 
-            # CORRECT logZ update: use incremental weights, not cumulative logw
-            # logZ increment = log mean exp of incremental weights
-            max_delta_logw = jnp.max(delta_logw)
-            logZ_increment = max_delta_logw + jnp.log(jnp.mean(jnp.exp(delta_logw - max_delta_logw)))
+            # CORRECT logZ update for annealed SMC / AIS:
+            # Incremental normalizer = log sum_i (w_{t-1,i} * exp(delta_logw_i))
+            # This accounts for the weighted average of incremental weights
+            # This is the standard AIS/SMC evidence estimator
+            weighted_delta_logw = delta_logw + jnp.log(w_prev_norm + 1e-10)  # Add small epsilon for numerical stability
+            max_weighted_delta = jnp.max(weighted_delta_logw)
+            logZ_increment = max_weighted_delta + jnp.log(jnp.sum(jnp.exp(weighted_delta_logw - max_weighted_delta)))
             logZ_est = logZ_est + logZ_increment
 
             # Resample if ESS < threshold
@@ -188,7 +202,6 @@ class AnnealedSMC(InferenceMethod):
                 logw_resampled = jnp.zeros_like(logw)
                 return particles_resampled, logw_resampled
 
-            key_resample = random.fold_in(key, t)
             do_resample = ess < ess_threshold * n_particles
             particles, logw = jax.lax.cond(
                 do_resample,
@@ -199,7 +212,6 @@ class AnnealedSMC(InferenceMethod):
 
             # Rejuvenation step
             if rejuvenation == "hmc":
-                key_rejuv = random.fold_in(key, t + 10000)
                 # Target tempered distribution: U_beta = beta * E(phi)
                 def energy_fn(phi):
                     return beta_curr * energy(phi, *energy_args, **energy_kwargs)
@@ -213,7 +225,6 @@ class AnnealedSMC(InferenceMethod):
                     jit=jit,
                 )
             elif rejuvenation == "mala":
-                key_rejuv = random.fold_in(key, t + 10000)
                 # Target tempered distribution: U_beta = beta * E(phi)
                 def energy_fn(phi):
                     return beta_curr * energy(phi, *energy_args, **energy_kwargs)
@@ -226,7 +237,6 @@ class AnnealedSMC(InferenceMethod):
                     jit=jit,
                 )
             elif rejuvenation == "nuts":
-                key_rejuv = random.fold_in(key, t + 10000)
                 # Target tempered distribution: U_beta = beta * E(phi)
                 def energy_fn(phi):
                     return beta_curr * energy(phi, *energy_args, **energy_kwargs)
@@ -241,16 +251,16 @@ class AnnealedSMC(InferenceMethod):
                     jit=jit,
                 )
 
-            return (particles, logw, logZ_est), ess_trace
+            return (particles, logw, logZ_est, key), ess_trace
 
         if jit:
-            (particles, logw, logZ_est), ess_trace = lax.scan(
-                step_fn, (particles, logw, logZ_est), jnp.arange(n_steps)
+            (particles, logw, logZ_est, _), ess_trace = lax.scan(
+                step_fn, (particles, logw, logZ_est, key), jnp.arange(n_steps)
             )
         else:
             ess_trace_list = []
             for t in range(n_steps):
-                (particles, logw, logZ_est), ess_t = step_fn((particles, logw, logZ_est), t)
+                (particles, logw, logZ_est, key), ess_t = step_fn((particles, logw, logZ_est, key), t)
                 ess_trace_list.append(ess_t)
             ess_trace = jnp.array(ess_trace_list)
 
