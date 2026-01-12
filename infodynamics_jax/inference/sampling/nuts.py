@@ -309,7 +309,7 @@ class NUTS(InferenceMethod):
                 tree_depth_trace = tree_depth_trace.at[i].set(tree_depth)
                 n_leapfrog_trace = n_leapfrog_trace.at[i].set(n_leapfrog)
             # Stack samples
-            samples = jax.tree_map(lambda *xs: jnp.stack(xs), *samples)
+            samples = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *samples)
 
         accept_rate = jnp.mean(accept_probs)
         return NUTSRun(

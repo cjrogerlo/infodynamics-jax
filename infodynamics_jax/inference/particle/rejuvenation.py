@@ -122,7 +122,8 @@ def hmc_rejuvenate(
         u = random.uniform(subkey2)
         accept = u < accept_prob
 
-        q_next = jax.lax.select(accept, q_new, q)
+        # Use tree_map to select between pytrees based on accept flag
+        q_next = tree_map(lambda new, old: jax.lax.select(accept, new, old), q_new, q)
         return q_next, accept_prob
 
     # Get number of particles from pytree structure
@@ -132,9 +133,9 @@ def hmc_rejuvenate(
     n_particles = particles_flat[0].shape[0]
     
     # Split keys for each particle and step
-    keys = random.split(key, n_particles * n_steps).reshape(
-        n_particles, n_steps, 2
-    )
+    # Split keys for each particle and step  
+    keys = random.split(key, n_particles * n_steps)  # shape: (n_particles * n_steps,)
+    keys = keys.reshape(n_particles, n_steps)
     
     # vmap over particles
     def particle_rejuvenate(q, keys):
@@ -244,9 +245,9 @@ def mala_rejuvenate(
     n_particles = particles_flat[0].shape[0]
     
     # Split keys for each particle and step
-    keys = random.split(key, n_particles * n_steps).reshape(
-        n_particles, n_steps, 2
-    )
+    # Split keys for each particle and step  
+    keys = random.split(key, n_particles * n_steps)  # shape: (n_particles * n_steps,)
+    keys = keys.reshape(n_particles, n_steps)
     
     # vmap over particles
     def particle_rejuvenate(q, keys):
@@ -419,9 +420,9 @@ def nuts_rejuvenate(
     n_particles = particles_flat[0].shape[0]
     
     # Split keys for each particle and step
-    keys = random.split(key, n_particles * n_steps).reshape(
-        n_particles, n_steps, 2
-    )
+    # Split keys for each particle and step  
+    keys = random.split(key, n_particles * n_steps)  # shape: (n_particles * n_steps,)
+    keys = keys.reshape(n_particles, n_steps)
     
     # vmap over particles
     def particle_rejuvenate(q, keys):

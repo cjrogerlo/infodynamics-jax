@@ -25,25 +25,42 @@ The library provides a clean separation between:
 
 ## Quick Start
 
+**New to the library?** See [QUICKSTART.md](QUICKSTART.md) for a 5-minute introduction.
+
 ```python
-from infodynamics_jax.infodynamics import run
-from infodynamics_jax.inference.sampling import HMC, HMCCFG
-from infodynamics_jax.energy import TargetEnergy, InertialEnergy, PriorEnergy
+import jax
+import jax.numpy as jnp
+from infodynamics_jax.core import Phi
+from infodynamics_jax.gp.kernels.params import KernelParams
+from infodynamics_jax.gp.kernels.rbf import rbf as rbf_kernel
+from infodynamics_jax.gp.likelihoods import get as get_likelihood
+from infodynamics_jax.energy import InertialEnergy, InertialCFG
+from infodynamics_jax.inference.optimisation import MAP2, MAP2CFG
+from infodynamics_jax.infodynamics import run, RunCFG
 
-# Define energy
-inertial = InertialEnergy(kernel="rbf", likelihood="gaussian")
-prior = PriorEnergy([...])
-target = TargetEnergy(inertial=inertial, prior=prior)
+# Generate data
+key = jax.random.key(0)
+X = jnp.linspace(-3, 3, 30)[:, None]
+Y = jnp.sin(X[:, 0]) + 0.1 * jax.random.normal(key, (30,))
 
-# Run inference
-method = HMC(cfg=HMCCFG(step_size=1e-2, n_samples=256))
-out = run(
-    key=key,
-    method=method,
-    energy=target,
-    phi_init=phi_init,
-    energy_args=(X, Y),
+# Initialize model
+phi_init = Phi(
+    kernel_params=KernelParams(lengthscale=jnp.array(1.0), variance=jnp.array(1.0)),
+    Z=jnp.linspace(-3, 3, 10)[:, None],
+    likelihood_params={"noise_var": jnp.array(0.1)},
+    jitter=1e-5,
 )
+
+# Create energy and run MAP-II
+energy = InertialEnergy(
+    kernel_fn=rbf_kernel,
+    likelihood=get_likelihood("gaussian"),
+    cfg=InertialCFG(estimator="gh", gh_n=20),
+)
+
+method = MAP2(cfg=MAP2CFG(steps=100, lr=1e-2))
+out = run(key=key, method=method, energy=energy, phi_init=phi_init, energy_args=(X, Y))
+phi_opt = out.result.phi  # Optimized hyperparameters
 ```
 
 ## Architecture
@@ -68,16 +85,40 @@ infodynamics_jax/
 - **Hyperprior utilities**: L2, log-L2 priors on kernel/likelihood parameters
 - **Data views**: SupervisedData, LatentData with batch/prefix operations
 
+## Examples
+
+Check out our comprehensive example notebooks in the `examples/` directory:
+
+1. **[Basic GP Regression](examples/notebook_01_basic_regression.ipynb)** - Introduction to MAP-II optimization
+2. **[Different Kernels](examples/notebook_02_different_kernels.ipynb)** - Comparing RBF, Matérn, Periodic kernels
+3. **[GP Classification](examples/notebook_03_classification.ipynb)** - Non-conjugate likelihoods
+4. **[Annealed SMC](examples/notebook_04_annealed_smc.ipynb)** - Full Bayesian inference
+5. **[Online IBIS](examples/notebook_05_online_ibis.ipynb)** - Streaming data processing
+
+See [examples/README.md](examples/README.md) for setup instructions.
+
 ## Documentation
 
+- **[Quick Start Guide](QUICKSTART.md)** - Get started in 5 minutes
+- **[Examples README](examples/README.md)** - How to run examples
 - [Energy Design](docs/energy_design.md)
 - [Design Documents](docs/design/)
 - [Contributing Guide](docs/contributing_energy.md)
 
 ## Installation
 
+### Option 1: Development Mode (Recommended)
+
 ```bash
-pip install jax jaxlib optax numpy scipy
+git clone <repository-url>
+cd infodynamics-jax
+pip install -e .
+```
+
+### Option 2: Manual Dependencies
+
+```bash
+pip install jax jaxlib optax numpy scipy matplotlib jupyter
 ```
 
 ## License

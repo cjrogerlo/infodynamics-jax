@@ -309,7 +309,7 @@ class SliceSampler(InferenceMethod):
                 accept_probs = accept_probs.at[i].set(accept_prob)
                 step_size_trace = step_size_trace.at[i].set(step_size_val)
             # Stack samples
-            samples = jax.tree_map(lambda *xs: jnp.stack(xs), *samples)
+            samples = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *samples)
 
         accept_rate = jnp.mean(accept_probs)
         return SliceRun(

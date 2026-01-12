@@ -193,7 +193,7 @@ class HMC(InferenceMethod):
                 energy_trace = energy_trace.at[i].set(energy_val)
                 accept_probs = accept_probs.at[i].set(accept_prob)
             # Stack samples
-            samples = jax.tree_map(lambda *xs: jnp.stack(xs), *samples)
+            samples = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *samples)
 
         accept_rate = jnp.mean(accept_probs)
         return HMCRun(samples=samples, accept_rate=accept_rate, energy_trace=energy_trace)

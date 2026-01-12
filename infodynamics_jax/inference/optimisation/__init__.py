@@ -4,20 +4,20 @@ Type-II optimisation methods.
 
 This module provides:
 - VGA: Variational Gaussian Approximation (optimisation algorithm)
-- MAP2: Maximum A Posteriori Type-II (general-purpose optimiser)
+- TypeII: Type-II optimiser (for ML-II and MAP-II)
 - VFE objective: Type-II variational objective (optimisation target)
 
 NOTE: These are for type-II / variational inference only.
 For Bayesian inference (SMC/MCMC), use energy/inertial.py instead.
 """
 from .vga import VGA, VGACFG, VGARun
-from .map2 import MAP2, MAP2CFG, MAP2Run
+from .typeii import TypeII, TypeIICFG, TypeIIRun
 from .vfe import vfe_objective, make_vfe_objective
 
 __all__ = [
     # Optimisation algorithms
     "VGA", "VGACFG", "VGARun",
-    "MAP2", "MAP2CFG", "MAP2Run",
+    "TypeII", "TypeIICFG", "TypeIIRun",
     # Optimisation objectives
     "vfe_objective", "make_vfe_objective",
 ]

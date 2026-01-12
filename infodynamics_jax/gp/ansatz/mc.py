@@ -80,10 +80,14 @@ class MonteCarlo:
         # Clip variance to avoid numerical issues
         var = jnp.clip(var, a_min=0.0)
         
+        # Protect sqrt operation: ensure var is not too small to avoid numerical issues
+        EPS_VAR = 1e-12
+        var_safe = jnp.maximum(var, EPS_VAR)
+        
         # Sample f ~ N(mu, var)
         # Shape: (n_samples, D)
         eps = jax.random.normal(key, shape=(self.n_samples, mu.shape[0]), dtype=mu.dtype)
-        f_samps = mu[None, :] + jnp.sqrt(var[None, :]) * eps  # (n_samples, D)
+        f_samps = mu[None, :] + jnp.sqrt(var_safe[None, :]) * eps  # (n_samples, D)
         
         # Evaluate nll for each sample
         def nll_of_sample(f):
@@ -155,10 +159,14 @@ class MonteCarlo:
         # MC estimation for non-conjugate likelihoods
         N, D = Y.shape
         
+        # Protect sqrt operation: ensure var_f is not too small to avoid numerical issues
+        EPS_VAR = 1e-12
+        var_f_safe = jnp.maximum(var_f, EPS_VAR)
+        
         # Sample f ~ q(f|phi) for all (N, D)
         # Shape: (n_samples, N, D)
         eps = jax.random.normal(key, shape=(self.n_samples, N, D), dtype=mu_f.dtype)
-        f_samps = mu_f[None, :, :] + jnp.sqrt(var_f[None, :, :]) * eps  # (n_samples, N, D)
+        f_samps = mu_f[None, :, :] + jnp.sqrt(var_f_safe[None, :, :]) * eps  # (n_samples, N, D)
         
         # Evaluate nll for each sample
         def nll_of_sample(f):

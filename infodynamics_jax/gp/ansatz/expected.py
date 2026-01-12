@@ -16,6 +16,7 @@ Estimator = Literal["gh", "mc"]
 import jax.numpy as jnp
 from jax.tree_util import register_pytree_node_class
 from .state import VariationalState
+from ..utils import safe_cholesky
 
 # -----------------------------------------------------------------------------
 # Analytic shortcuts: Gaussian likelihood under Gaussian q(f)
@@ -66,8 +67,8 @@ def qfi_from_qu_full(phi, X: jnp.ndarray, kernel_fn: Callable, m_u: jnp.ndarray,
     """
     Z = phi.Z
     Kuu = kernel_fn(Z, Z, phi.kernel_params)
-    Kuu = 0.5 * (Kuu + Kuu.T) + phi.jitter * jnp.eye(Kuu.shape[0], dtype=Kuu.dtype)
-    L = jnp.linalg.cholesky(Kuu)
+    # Use safe Cholesky with automatic jitter adjustment
+    L = safe_cholesky(Kuu, jitter=phi.jitter, max_jitter=1e-2)
 
     Kxu = kernel_fn(X, Z, phi.kernel_params)          # (N,M)
     Kxx_diag = jnp.diag(kernel_fn(X, X, phi.kernel_params))  # (N,)
@@ -86,8 +87,10 @@ def qfi_from_qu_full(phi, X: jnp.ndarray, kernel_fn: Callable, m_u: jnp.ndarray,
     mu_f = A @ m_u     # (N,D)
 
     # conditional residual term (k_ii - q_ii)
-    cond = (Kxx_diag - q_diag)[:, None]  # (N,1)
-    cond = jnp.clip(cond, a_min=0.0)
+    # Ensure q_diag doesn't exceed Kxx_diag (theoretically shouldn't, but numerical errors can cause this)
+    q_diag_safe = jnp.minimum(q_diag, Kxx_diag * (1.0 + 1e-6))
+    cond = (Kxx_diag - q_diag_safe)[:, None]  # (N,1)
+    cond = jnp.maximum(cond, 0.0)  # Ensure non-negative
 
     # a_i^T S a_i where S = L_u L_u^T
     if L_u.ndim == 2:

@@ -22,7 +22,7 @@ Rationale:
 from .base import InferenceMethod
 from .optimisation import (
     VGA, VGACFG, VGARun,
-    MAP2, MAP2CFG, MAP2Run,
+    TypeII, TypeIICFG, TypeIIRun,
     vfe_objective, make_vfe_objective
 )
 from .sampling import (
@@ -39,7 +39,7 @@ from .particle import (
 __all__ = [
     "InferenceMethod",
     "VGA", "VGACFG", "VGARun",
-    "MAP2", "MAP2CFG", "MAP2Run",
+    "TypeII", "TypeIICFG", "TypeIIRun",
     "vfe_objective", "make_vfe_objective",
     "HMC", "HMCCFG", "HMCRun",
     "NUTS", "NUTSCFG", "NUTSRun",

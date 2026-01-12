@@ -197,8 +197,9 @@ class AnnealedSMC(InferenceMethod):
 
             # Resample if ESS < threshold
             def resample_particles(particles, logw, key):
+                from jax.tree_util import tree_map
                 indices = multinomial_resample(key, logw, n_particles)
-                particles_resampled = jax.tree_map(lambda x: x[indices], particles)
+                particles_resampled = tree_map(lambda x: x[indices], particles)
                 logw_resampled = jnp.zeros_like(logw)
                 return particles_resampled, logw_resampled
 

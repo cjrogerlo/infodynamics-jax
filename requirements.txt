@@ -1,0 +1,14 @@
+# Core dependencies for infodynamics-jax
+jax>=0.4.0
+jaxlib>=0.4.0
+optax>=0.1.0
+numpy>=1.20.0
+scipy>=1.7.0
+
+# Development and testing
+pytest>=7.0.0
+pytest-cov>=3.0.0
+
+# Examples and notebooks
+jupyter>=1.0.0
+matplotlib>=3.5.0

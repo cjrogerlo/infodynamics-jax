@@ -88,7 +88,10 @@ class GaussHermite:
         x, w = self.nodes_weights()
 
         # Transform GH nodes to N(mu, var)
-        f = mu + jnp.sqrt(var) * jnp.sqrt(2.0) * x
+        # Protect sqrt operation: ensure var is not too small to avoid numerical issues
+        EPS_VAR = 1e-12
+        var_safe = jnp.maximum(var, EPS_VAR)
+        f = mu + jnp.sqrt(var_safe) * jnp.sqrt(2.0) * x
 
         # Evaluate negative log-likelihood
         vals = nll_1d_fn(y, f, phi.likelihood_params)
