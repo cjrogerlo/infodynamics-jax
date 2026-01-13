@@ -92,7 +92,9 @@ def predict_typeii(
     
     # Compute diagonals of Q matrices (for residuals)
     diag_Q_train = diag_Q_ff(K_train_Z, K_ZZ, jitter=phi.jitter)  # (N_train,)
-    diag_Q_test = jnp.sum(A_test**2, axis=1)  # (N_test,)
+    # Correct diagonal calculation for q_test
+    v_test = jax.scipy.linalg.solve_triangular(L_ZZ, K_test_Z.T, lower=True)
+    diag_Q_test = jnp.sum(v_test**2, axis=0)  # (N_test,)
     
     # For each output dimension, compute predictive distribution using low-rank operations
     def predict_for_dim(y_d, noise_var_d):

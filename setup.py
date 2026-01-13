@@ -19,12 +19,12 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 setup(
     name="infodynamics-jax",
     version="0.1.0",
-    author="Your Name",
-    author_email="your.email@example.com",
+    author="Chi-Jen Roger Lo",
+    author_email="cjl202@cam.ac.uk",
     description="Inference as infodynamics - A general-purpose Bayesian inference library",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/infodynamics-jax",
+    url="https://github.com/cjrogerlo/infodynamics-jax",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",

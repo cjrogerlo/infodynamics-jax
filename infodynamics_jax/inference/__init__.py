@@ -35,6 +35,11 @@ from .particle import (
     AnnealedSMC, AnnealedSMCCFG, SMCRun,
     IBIS, IBISCFG, IBISRun
 )
+from .rj import (
+    RJState,
+    RJMCMC, RJMCMCCFG, RJMCMCRun,
+    RJVMC, RJVMCCFG, RJVMCRun,
+)
 
 __all__ = [
     "InferenceMethod",
@@ -47,4 +52,7 @@ __all__ = [
     "SliceSampler", "SliceCFG", "SliceRun",
     "AnnealedSMC", "AnnealedSMCCFG", "SMCRun",
     "IBIS", "IBISCFG", "IBISRun",
+    "RJState",
+    "RJMCMC", "RJMCMCCFG", "RJMCMCRun",
+    "RJVMC", "RJVMCCFG", "RJVMCRun",
 ]

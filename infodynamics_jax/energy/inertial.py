@@ -16,7 +16,7 @@ from ..gp.ansatz.expected import (
 )
 from ..gp.ansatz.state import VariationalState
 from ..gp.ansatz.gh import GaussHermite
-from ..gp.sparsify import SparsifiedKernel
+from ..gp.sparsify import SparsifiedKernel, fitc_log_evidence
 from ..gp.utils import safe_cholesky
 
 
@@ -25,6 +25,7 @@ class InertialCFG:
     """Configuration for inertial (data-dependent) energy."""
 
     estimator: Optional[Literal["analytic", "gh", "mc"]] = None  # backend selector
+    analytic_mode: Literal["collapsed_posterior", "fitc_marginal"] = "collapsed_posterior"
 
     # --- MC backend ---
     n_mc_samples: int = 16
@@ -35,6 +36,10 @@ class InertialCFG:
     inner_lr: float = 1e-2
 
     gh_n: int = 20
+
+
+# Backward-compatible alias for older code and scripts.
+InertialEnergyCFG = InertialCFG
 
 
 def _gaussian_collapsed_energy(phi, X, Y, *, kernel_fn: Callable, residual: str = "fitc") -> jnp.ndarray:
@@ -123,6 +128,25 @@ def _gaussian_collapsed_energy(phi, X, Y, *, kernel_fn: Callable, residual: str 
     return total_energy
 
 
+def _gaussian_fitc_marginal_energy(phi, X, Y, *, kernel_fn: Callable) -> jnp.ndarray:
+    """
+    Negative FITC log marginal likelihood (Woodbury form).
+
+    This avoids materialising N x N and matches the standard FITC evidence.
+    """
+    noise_var = phi.likelihood_params["noise_var"]
+    logp = fitc_log_evidence(
+        kernel_fn=kernel_fn,
+        params=phi.kernel_params,
+        X=X,
+        y=Y,
+        Z=phi.Z,
+        noise_var=noise_var,
+        jitter=phi.jitter,
+    )
+    return -logp
+
+
 class InertialEnergy(EnergyTerm):
     """
     Data-dependent inertial energy.
@@ -161,12 +185,18 @@ class InertialEnergy(EnergyTerm):
         # For Gaussian likelihood, automatically use collapsed (analytic) path
         if analytic_energy_fn is None:
             if getattr(likelihood, "supports_analytic_marginal", False):
-                # Gaussian likelihood: use collapsed computation directly
-                analytic_energy_fn = partial(
-                    _gaussian_collapsed_energy,
-                    kernel_fn=kernel_fn,
-                    residual=residual,
-                )
+                if cfg.analytic_mode == "fitc_marginal":
+                    analytic_energy_fn = partial(
+                        _gaussian_fitc_marginal_energy,
+                        kernel_fn=kernel_fn,
+                    )
+                else:
+                    # Gaussian likelihood: use collapsed computation directly
+                    analytic_energy_fn = partial(
+                        _gaussian_collapsed_energy,
+                        kernel_fn=kernel_fn,
+                        residual=residual,
+                    )
         
         self.analytic_energy_fn = analytic_energy_fn
         # Gauss-Hermite quadrature instance for GH estimator

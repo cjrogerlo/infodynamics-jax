@@ -4,7 +4,8 @@ from __future__ import annotations
 from .base import EnergyTerm
 from .compose import SumEnergy, WeightedEnergy, ConditionalEnergy, TargetEnergy
 from .prior import PriorEnergy
-from .inertial import InertialEnergy, InertialCFG
+from .inertial import InertialEnergy, InertialCFG, InertialEnergyCFG
+from .vfe import VFEEnergy, titsias_vfe_energy
 
 __all__ = [
     "EnergyTerm",
@@ -15,4 +16,7 @@ __all__ = [
     "PriorEnergy",
     "InertialEnergy",
     "InertialCFG",
+    "InertialEnergyCFG",
+    "VFEEnergy",
+    "titsias_vfe_energy",
 ]

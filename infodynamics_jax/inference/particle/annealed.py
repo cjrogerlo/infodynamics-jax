@@ -56,6 +56,7 @@ class AnnealedSMCCFG:
     step_size: float = 1e-2  # For HMC/MALA/NUTS rejuvenation
     n_leapfrog: int = 4  # For HMC rejuvenation
     jit: bool = True
+    verbose: bool = False
 
 
 @dataclass
@@ -66,6 +67,12 @@ class SMCRun:
     ess_trace: jnp.ndarray  # shape [n_steps]
     logZ_est: float
     betas: jnp.ndarray  # shape [n_steps+1]
+
+    @property
+    def beta_trace(self) -> jnp.ndarray:
+        """Backward-compatible alias for betas."""
+        # Match ESS trace length (n_steps) for legacy plotting code.
+        return self.betas[1:]
 
 
 class AnnealedSMC(InferenceMethod):
@@ -254,13 +261,22 @@ class AnnealedSMC(InferenceMethod):
 
             return (particles, logw, logZ_est, key), ess_trace
 
+        def iter_steps():
+            if not cfg.verbose:
+                return range(n_steps)
+            try:
+                from tqdm.auto import tqdm
+                return tqdm(range(n_steps), total=n_steps, desc="AnnealedSMC")
+            except Exception:
+                return range(n_steps)
+
         if jit:
             (particles, logw, logZ_est, _), ess_trace = lax.scan(
                 step_fn, (particles, logw, logZ_est, key), jnp.arange(n_steps)
             )
         else:
             ess_trace_list = []
-            for t in range(n_steps):
+            for t in iter_steps():
                 (particles, logw, logZ_est, key), ess_t = step_fn((particles, logw, logZ_est, key), t)
                 ess_trace_list.append(ess_t)
             ess_trace = jnp.array(ess_trace_list)

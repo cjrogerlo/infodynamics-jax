@@ -6,8 +6,10 @@ from dataclasses import dataclass
 # -----------------------------------------------------------------------------
 # Precomputed Gauss–Hermite (physicists') nodes and weights (GH-20)
 # -----------------------------------------------------------------------------
+# Store as Python lists to avoid JAX array creation at module import time,
+# which causes issues with MPS backend on macOS. Convert to JAX arrays lazily.
 
-_GH20_X = jnp.array([
+_GH20_X_LIST = [
     -5.387480890011232,
     -4.603682449550744,
     -3.944764040115625,
@@ -28,9 +30,9 @@ _GH20_X = jnp.array([
      3.944764040115625,
      4.603682449550744,
      5.387480890011232,
-])
+]
 
-_GH20_W = jnp.array([
+_GH20_W_LIST = [
     2.229393645534151e-13,
     4.399340992273180e-10,
     1.086069370769281e-07,
@@ -51,7 +53,7 @@ _GH20_W = jnp.array([
     1.086069370769281e-07,
     4.399340992273180e-10,
     2.229393645534151e-13,
-])
+]
 
 
 @dataclass(frozen=True)
@@ -69,7 +71,8 @@ class GaussHermite:
             raise NotImplementedError(
                 "Only GH-20 is supported. Add more tables if needed."
             )
-        return _GH20_X, _GH20_W
+        # Convert to JAX arrays lazily to avoid MPS backend issues at import time
+        return jnp.array(_GH20_X_LIST), jnp.array(_GH20_W_LIST)
 
     def expect_nll_1d(self, y, mu, var, phi, nll_1d_fn):
         """

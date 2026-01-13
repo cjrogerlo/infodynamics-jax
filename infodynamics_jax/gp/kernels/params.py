@@ -50,3 +50,28 @@ class KernelParams:
             offset=children[5],
             degree=children[6],
         )
+
+
+def RBFParams(
+    *,
+    log_amp: jnp.ndarray | None = None,
+    log_len: jnp.ndarray | None = None,
+    variance: jnp.ndarray | None = None,
+    lengthscale: jnp.ndarray | None = None,
+) -> KernelParams:
+    """
+    Backward-compatible factory for legacy RBFParams.
+
+    Old API used log_amp/log_len; map them to variance/lengthscale.
+    """
+    if variance is not None and log_amp is not None:
+        raise TypeError("Provide only one of log_amp or variance.")
+    if lengthscale is not None and log_len is not None:
+        raise TypeError("Provide only one of log_len or lengthscale.")
+
+    if variance is None:
+        variance = jnp.exp(log_amp) if log_amp is not None else jnp.array(1.0)
+    if lengthscale is None:
+        lengthscale = jnp.exp(log_len) if log_len is not None else jnp.array(1.0)
+
+    return KernelParams(lengthscale=lengthscale, variance=variance)

@@ -180,10 +180,12 @@ def likelihood_log_l2_hyperprior(phi: Phi, keys: Optional[list[str]] = None,
 def make_hyperprior(kernel_fields: Optional[list[str]] = None,
                     kernel_lambda: float = 0.0,
                     kernel_log_lambda: float = 0.0,
+                    kernel_log_mu: Optional[Dict[str, float]] = None,
                     z_lambda: float = 0.0,
                     likelihood_keys: Optional[list[str]] = None,
                     likelihood_lambda: float = 0.0,
-                    likelihood_log_lambda: float = 0.0) -> Callable[[Phi, Any, Any, Any], jnp.ndarray]:
+                    likelihood_log_lambda: float = 0.0,
+                    likelihood_log_mu: Optional[Dict[str, float]] = None) -> Callable[[Phi, Any, Any, Any], jnp.ndarray]:
     """
     Factory function to create a hyperprior function.
     
@@ -194,10 +196,12 @@ def make_hyperprior(kernel_fields: Optional[list[str]] = None,
         kernel_fields: Kernel parameter fields to penalize
         kernel_lambda: L2 penalty on kernel params
         kernel_log_lambda: Log-L2 penalty on kernel params
+        kernel_log_mu: Optional dict of mean values for log kernel params
         z_lambda: L2 penalty on Z
         likelihood_keys: Likelihood parameter keys to penalize
         likelihood_lambda: L2 penalty on likelihood params
         likelihood_log_lambda: Log-L2 penalty on likelihood params
+        likelihood_log_mu: Optional dict of mean values for log likelihood params
     
     Returns:
         Function (phi, X, Y, key=None) -> scalar hyperprior value
@@ -224,7 +228,7 @@ def make_hyperprior(kernel_fields: Optional[list[str]] = None,
             E += kernel_l2_hyperprior(phi, fields=kernel_fields, lam=kernel_lambda)
         
         if kernel_log_lambda > 0.0:
-            E += kernel_log_l2_hyperprior(phi, fields=kernel_fields, lam=kernel_log_lambda)
+            E += kernel_log_l2_hyperprior(phi, fields=kernel_fields, lam=kernel_log_lambda, mu=kernel_log_mu)
         
         if z_lambda > 0.0:
             E += z_l2_hyperprior(phi, lam=z_lambda)
@@ -233,11 +237,12 @@ def make_hyperprior(kernel_fields: Optional[list[str]] = None,
             E += likelihood_l2_hyperprior(phi, keys=likelihood_keys, lam=likelihood_lambda)
         
         if likelihood_log_lambda > 0.0:
-            E += likelihood_log_l2_hyperprior(phi, keys=likelihood_keys, lam=likelihood_log_lambda)
+            E += likelihood_log_l2_hyperprior(phi, keys=likelihood_keys, lam=likelihood_log_lambda, mu=likelihood_log_mu)
         
         return E
     
     return hyperprior_fn
+
 
 
 __all__ = [

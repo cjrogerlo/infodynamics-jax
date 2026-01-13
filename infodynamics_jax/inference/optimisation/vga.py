@@ -35,6 +35,11 @@ class VGARun:
     energy_trace: jnp.ndarray  # shape [steps]
     grad_norm_trace: jnp.ndarray  # shape [steps]
 
+    @property
+    def loss(self) -> jnp.ndarray:
+        """Backward-compatible alias for energy_trace."""
+        return self.energy_trace
+
 
 class VGA(InferenceMethod):
     """
@@ -47,13 +52,15 @@ class VGA(InferenceMethod):
         self.cfg = cfg
 
     def run(
-        self, 
-        energy: EnergyTerm, 
-        phi_init, 
-        *, 
-        key=None, 
-        energy_args=(), 
-        energy_kwargs=None
+        self,
+        energy: EnergyTerm | None,
+        phi_init,
+        *args,
+        key=None,
+        energy_kwargs=None,
+        objective: EnergyTerm | None = None,
+        energy_args=None,
+        energy_args_kw=None,
     ) -> VGARun:
         """
         Run VGA optimisation.
@@ -64,10 +71,36 @@ class VGA(InferenceMethod):
             key: PRNG key (optional, for stochastic energy)
             energy_args: Additional arguments for energy
             energy_kwargs: Additional keyword arguments for energy
+            objective: Backward-compatible alias for energy
         
         Returns:
             VGARun with optimised phi, energy trace, and grad norm trace
         """
+        if objective is not None:
+            if energy is not None and callable(energy):
+                raise TypeError("Provide only one of energy or objective.")
+            if energy is not None and not callable(energy):
+                key = energy
+            energy = objective
+
+        if energy is None:
+            raise TypeError("Missing required energy/objective function.")
+
+        if args:
+            if energy_args is not None or energy_args_kw is not None:
+                raise TypeError("Provide energy_args positionally or via energy_args/energy_args_kw, not both.")
+            energy_args = args
+
+        if energy_args_kw is not None and energy_args is not None:
+            raise TypeError("Provide only one of energy_args or energy_args_kw.")
+        if energy_args is None:
+            if energy_args_kw is not None:
+                energy_args = tuple(energy_args_kw)
+            else:
+                energy_args = ()
+        else:
+            energy_args = tuple(energy_args)
+
         if energy_kwargs is None:
             energy_kwargs = {}
 

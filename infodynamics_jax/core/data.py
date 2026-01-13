@@ -68,6 +68,10 @@ class SupervisedData:
         return self.X.shape[0]
 
 
+# Backward-compatible alias for older code and scripts.
+SupervisedDataset = SupervisedData
+
+
 @dataclass(frozen=True)
 class LatentData:
     """
@@ -112,3 +116,10 @@ class LatentData:
     def __len__(self) -> int:
         """Return number of samples."""
         return self.Y.shape[0]
+
+
+__all__ = [
+    "SupervisedData",
+    "SupervisedDataset",  # Backward-compatible alias
+    "LatentData",
+]

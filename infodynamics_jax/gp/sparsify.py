@@ -46,7 +46,7 @@ def diag_Q_ff(K_xz, K_zz, jitter=1e-6):
     """
     Compute only diagonal of Q_ff = diag(K_xz @ K_zz^{-1} @ K_xz^T)
     
-    More efficient: q_ii = ||A[i,:]||^2 where A = K_xz @ K_zz^{-1}
+    Correct formula: diag(V^T @ V) where L @ V = K_xz^T
     
     Args:
         K_xz: (N, M)
@@ -57,8 +57,9 @@ def diag_Q_ff(K_xz, K_zz, jitter=1e-6):
         diag_Q: (N,) diagonal of Q_ff
     """
     L_zz = safe_cholesky(K_zz, jitter=jitter, max_jitter=1e-2)
-    A = jax.scipy.linalg.cho_solve((L_zz, True), K_xz.T).T  # (N, M)
-    diag_Q = jnp.sum(A**2, axis=1)  # (N,)
+    # Correct diagonal calculation: q_ii = sum_j (L^{-1} @ K_zi)_j^2
+    v = jax.scipy.linalg.solve_triangular(L_zz, K_xz.T, lower=True)  # (M, N)
+    diag_Q = jnp.sum(v**2, axis=0)  # (N,)
     return diag_Q
 
 
@@ -171,6 +172,77 @@ class SparsifiedKernel:
 
 
 # ============================================================================
+# 4. FITC log evidence (Woodbury form, no N x N materialisation)
+# ============================================================================
+
+def _kernel_diag(kernel_fn, X, params):
+    name = getattr(kernel_fn, "__name__", "")
+    if name in {
+        "rbf",
+        "matern12",
+        "matern32",
+        "matern52",
+        "rational_quadratic",
+        "periodic",
+        "white",
+    }:
+        var = jnp.asarray(params.variance)
+        return jnp.broadcast_to(var, (X.shape[0],))
+    return jnp.diag(kernel_fn(X, X, params))
+
+
+def fitc_log_evidence(
+    kernel_fn,
+    params,
+    X,
+    y,
+    Z,
+    *,
+    noise_var,
+    jitter: float = 1e-8,
+    kernel_diag_fn=None,
+):
+    """
+    FITC log marginal likelihood using Woodbury form.
+
+    This mirrors the standard FITC computation without materialising N x N.
+    """
+    if y.ndim == 2:
+        y = y.squeeze(-1)
+
+    N = X.shape[0]
+    M = Z.shape[0]
+
+    K_xz = kernel_fn(X, Z, params)  # (N, M)
+    K_zz = kernel_fn(Z, Z, params)  # (M, M)
+    K_zz = 0.5 * (K_zz + K_zz.T) + jitter * jnp.eye(M, dtype=K_zz.dtype)
+    Lz = jnp.linalg.cholesky(K_zz)
+    V = jax.scipy.linalg.solve_triangular(Lz, K_xz.T, lower=True)  # (M, N)
+
+    diag_Q = jnp.sum(V * V, axis=0)  # (N,)
+    if kernel_diag_fn is None:
+        diag_Kxx = _kernel_diag(kernel_fn, X, params)
+    else:
+        diag_Kxx = kernel_diag_fn(X, params)
+
+    noise_var = jnp.asarray(noise_var)
+    d = jnp.maximum(diag_Kxx - diag_Q + noise_var, 1e-12)  # (N,)
+
+    A = V / jnp.sqrt(d)[None, :]  # (M, N)
+    B = jnp.eye(M, dtype=K_zz.dtype) + A @ A.T
+    Lb = jnp.linalg.cholesky(B)
+
+    b = y / jnp.sqrt(d)  # (N,)
+    Ab = A @ b  # (M,)
+    c = jax.scipy.linalg.cho_solve((Lb, True), Ab)
+
+    quad = jnp.dot(b, b) - jnp.dot(c, Ab)
+    logdet = jnp.sum(jnp.log(d)) + 2.0 * jnp.sum(jnp.log(jnp.diag(Lb)))
+    const = N * jnp.log(2.0 * jnp.pi)
+    return -0.5 * (quad + logdet + const)
+
+
+# ============================================================================
 # Public API
 # ============================================================================
 
@@ -184,4 +256,6 @@ __all__ = [
     "dtc_diag",
     # Main abstraction
     "SparsifiedKernel",
+    # FITC evidence
+    "fitc_log_evidence",
 ]

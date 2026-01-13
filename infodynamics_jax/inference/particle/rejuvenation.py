@@ -132,10 +132,9 @@ def hmc_rejuvenate(
         raise ValueError("particles pytree is empty")
     n_particles = particles_flat[0].shape[0]
     
-    # Split keys for each particle and step
-    # Split keys for each particle and step  
-    keys = random.split(key, n_particles * n_steps)  # shape: (n_particles * n_steps,)
-    keys = keys.reshape(n_particles, n_steps)
+    # Split keys per particle, then per step (works across JAX key types)
+    particle_keys = random.split(key, n_particles)
+    keys = jax.vmap(lambda k: random.split(k, n_steps))(particle_keys)
     
     # vmap over particles
     def particle_rejuvenate(q, keys):
@@ -235,7 +234,7 @@ def mala_rejuvenate(
         u = random.uniform(subkey2)
         accept = u < accept_prob
         
-        q_next = jax.lax.select(accept, q_proposed, q)
+        q_next = tree_map(lambda new, old: jax.lax.select(accept, new, old), q_proposed, q)
         return q_next, accept_prob
 
     # Get number of particles from pytree structure
@@ -244,10 +243,9 @@ def mala_rejuvenate(
         raise ValueError("particles pytree is empty")
     n_particles = particles_flat[0].shape[0]
     
-    # Split keys for each particle and step
-    # Split keys for each particle and step  
-    keys = random.split(key, n_particles * n_steps)  # shape: (n_particles * n_steps,)
-    keys = keys.reshape(n_particles, n_steps)
+    # Split keys per particle, then per step (works across JAX key types)
+    particle_keys = random.split(key, n_particles)
+    keys = jax.vmap(lambda k: random.split(k, n_steps))(particle_keys)
     
     # vmap over particles
     def particle_rejuvenate(q, keys):
@@ -419,10 +417,9 @@ def nuts_rejuvenate(
         raise ValueError("particles pytree is empty")
     n_particles = particles_flat[0].shape[0]
     
-    # Split keys for each particle and step
-    # Split keys for each particle and step  
-    keys = random.split(key, n_particles * n_steps)  # shape: (n_particles * n_steps,)
-    keys = keys.reshape(n_particles, n_steps)
+    # Split keys per particle, then per step (works across JAX key types)
+    particle_keys = random.split(key, n_particles)
+    keys = jax.vmap(lambda k: random.split(k, n_steps))(particle_keys)
     
     # vmap over particles
     def particle_rejuvenate(q, keys):
