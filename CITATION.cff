@@ -1,0 +1,9 @@
+cff-version: 1.0.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: Lo
+    given-names: Chi-Jen (Roger)
+title: infodynamics-jax
+version: 1.0.0
+date-released: 2026-01-01
+doi: "10.1234/zenodo.5678"  # TBD
