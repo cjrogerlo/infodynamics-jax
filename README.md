@@ -1,5 +1,13 @@
 # infodynamics-jax
 
+infodynamics-jax is a library of composable primitives for explicit probabilistic inference.
+
+The project provides mathematically specified building blocks—energies, generative models, and inference dynamics—designed for transparency, analysis, and reproducibility.
+
+System-level configurations, performance-tuned execution pipelines, and domain-specific inference recipes are intentionally not part of the public release.
+
+This separation follows standard practice in probabilistic machine learning, where scientific primitives are shared openly, while system composition remains application-dependent.
+
 **Inference as infodynamics** — A general-purpose library for Bayesian inference over energy landscapes.
 
 ## Overview
@@ -123,7 +131,21 @@ pip install jax jaxlib optax numpy scipy matplotlib jupyter
 
 ## License
 
-[Add your license here]
+This project is licensed under the **Apache License 2.0**.
+
+You may use, modify, and distribute this library (including in commercial and closed-source projects) as long as you:
+
+- **Include a copy of the Apache 2.0 license** (see the `LICENSE` file).
+- **Preserve copyright and attribution notices**.
+- **State clearly if you have modified the files**.
+- **Respect the patent license terms** described in the Apache 2.0 license.
+
+See the `LICENSE` file for the full license text.
+
+## IP and Attribution Notice
+
+This research was conducted while the author was affiliated with the University of Cambridge; however, the software is released as an independent project.
+All copyrights in the codebase are retained by the author(s) and licensed under the Apache License 2.0.
 
 ## Related Projects
 
