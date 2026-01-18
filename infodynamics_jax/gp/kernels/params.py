@@ -1,3 +1,4 @@
+# infodynamics_jax/gp/kernels/params.py
 from __future__ import annotations
 from dataclasses import dataclass, field
 import jax.numpy as jnp

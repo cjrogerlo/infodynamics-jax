@@ -1,4 +1,4 @@
-# infodynamics_jax/kernels/periodic.py
+# infodynamics_jax/gp/kernels/periodic.py
 import jax.numpy as jnp
 from .params import KernelParams
 

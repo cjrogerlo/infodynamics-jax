@@ -1,4 +1,4 @@
-# infodynamics_jax/energy/object.py
+# infodynamics_jax/gp/ansatz/object.py
 from __future__ import annotations
 
 from dataclasses import dataclass

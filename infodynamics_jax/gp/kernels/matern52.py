@@ -1,3 +1,4 @@
+# infodynamics_jax/gp/kernels/matern52.py
 import jax.numpy as jnp
 from .utils import scaled_sqdist
 from .params import KernelParams

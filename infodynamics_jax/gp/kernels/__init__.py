@@ -1,4 +1,4 @@
-# infodynamics_jax/kernels/__init__.py
+# infodynamics_jax/gp/kernels/__init__.py
 
 from .base import register, get
 

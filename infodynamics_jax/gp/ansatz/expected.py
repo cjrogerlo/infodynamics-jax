@@ -1,4 +1,4 @@
-# infodynamics_jax/energy/expected.py
+# infodynamics_jax/gp/ansatz/expected.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,6 +17,7 @@ import jax.numpy as jnp
 from jax.tree_util import register_pytree_node_class
 from .state import VariationalState
 from ..utils import safe_cholesky
+from ..sparsify import _kernel_diag
 
 # -----------------------------------------------------------------------------
 # Analytic shortcuts: Gaussian likelihood under Gaussian q(f)
@@ -71,7 +72,9 @@ def qfi_from_qu_full(phi, X: jnp.ndarray, kernel_fn: Callable, m_u: jnp.ndarray,
     L = safe_cholesky(Kuu, jitter=phi.jitter, max_jitter=1e-2)
 
     Kxu = kernel_fn(X, Z, phi.kernel_params)          # (N,M)
-    Kxx_diag = jnp.diag(kernel_fn(X, X, phi.kernel_params))  # (N,)
+    # Use optimized diagonal computation (for RBF and other stationary kernels,
+    # this avoids computing the full N×N matrix)
+    Kxx_diag = _kernel_diag(kernel_fn, X, phi.kernel_params)  # (N,)
 
     # Solve for A = Kxu Kuu^{-1} = (solve(Kuu, Kux))^T but stably via chol
     # We need a_i row-wise. Compute V = L^{-1} Kux = L^{-1} Kxu^T => (M,N)

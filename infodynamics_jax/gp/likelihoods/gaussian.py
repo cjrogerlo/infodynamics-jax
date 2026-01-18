@@ -1,3 +1,4 @@
+# infodynamics_jax/gp/likelihoods/gaussian.py
 import jax.numpy as jnp
 
 class GaussianLikelihood:

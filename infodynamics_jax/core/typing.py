@@ -1,3 +1,4 @@
+# infodynamics_jax/core/typing.py
 from __future__ import annotations
 from typing import Protocol, Any
 from .phi import Phi

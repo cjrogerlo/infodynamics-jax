@@ -1,4 +1,4 @@
-# infodynamics_jax/energy/state.py
+# infodynamics_jax/gp/ansatz/state.py
 from dataclasses import dataclass
 from typing import Optional
 import jax.numpy as jnp

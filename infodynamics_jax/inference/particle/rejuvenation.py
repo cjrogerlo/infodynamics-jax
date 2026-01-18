@@ -143,14 +143,17 @@ def hmc_rejuvenate(
             return hmc_step(carry, key)
         
         if jit:
-            q, _ = lax.scan(step, q, keys)
+            q, probs = lax.scan(step, q, keys)
         else:
+            probs_list = []
             for k in keys:
-                q, _ = hmc_step(q, k)
-        return q
+                q, p = hmc_step(q, k)
+                probs_list.append(p)
+            probs = jnp.array(probs_list)
+        return q, probs
 
-    particles = jax.vmap(particle_rejuvenate)(particles, keys)
-    return particles
+    particles, accept_probs = jax.vmap(particle_rejuvenate)(particles, keys)
+    return particles, accept_probs
 
 
 def mala_rejuvenate(
@@ -254,14 +257,17 @@ def mala_rejuvenate(
             return mala_step(carry, key)
         
         if jit:
-            q, _ = lax.scan(step, q, keys)
+            q, probs = lax.scan(step, q, keys)
         else:
+            probs_list = []
             for k in keys:
-                q, _ = mala_step(q, k)
-        return q
+                q, p = mala_step(q, k)
+                probs_list.append(p)
+            probs = jnp.array(probs_list)
+        return q, probs
 
-    particles = jax.vmap(particle_rejuvenate)(particles, keys)
-    return particles
+    particles, accept_probs = jax.vmap(particle_rejuvenate)(particles, keys)
+    return particles, accept_probs
 
 
 def _leapfrog_step_nuts(q, p, grad_U_val, step_size, grad_U_fn):
@@ -428,14 +434,17 @@ def nuts_rejuvenate(
             return nuts_step(carry, key)
         
         if jit:
-            q, _ = lax.scan(step, q, keys)
+            q, probs = lax.scan(step, q, keys)
         else:
+            probs_list = []
             for k in keys:
-                q, _ = nuts_step(q, k)
-        return q
+                q, p = nuts_step(q, k)
+                probs_list.append(p)
+            probs = jnp.array(probs_list)
+        return q, probs
 
-    particles = jax.vmap(particle_rejuvenate)(particles, keys)
-    return particles
+    particles, accept_probs = jax.vmap(particle_rejuvenate)(particles, keys)
+    return particles, accept_probs
 
 
 __all__ = [

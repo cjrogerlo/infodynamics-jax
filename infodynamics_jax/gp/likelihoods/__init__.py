@@ -1,4 +1,4 @@
-# infodynamics_jax/likelihoods/__init__.py
+# infodynamics_jax/gp/likelihoods/__init__.py
 
 from .base import register, get
 

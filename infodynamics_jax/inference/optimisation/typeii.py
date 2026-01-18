@@ -6,16 +6,24 @@ This module provides a general-purpose Type-II optimiser that can be used for:
 - **ML-II (Maximum Likelihood Type-II)**: Optimize VFE objective (no hyperprior)
 - **MAP-II (Maximum A Posteriori Type-II)**: Optimize VFE + hyperprior
 
-The optimiser finds hyperparameters that minimize the energy function:
-    phi* = argmin_phi E(phi)
+The optimiser finds hyperparameters that minimize the VFE (Variational Free Energy):
+    phi* = argmin_phi VFE(phi)
 
-where E(phi) can be:
-- VFE objective (for ML-II or MAP-II)
-- InertialEnergy (for Bayesian inference)
-- TargetEnergy (with prior terms)
+where VFE(phi) = E_inertial(phi) + KL_term(phi)
+
+For Gaussian likelihood:
+    - VFE can be collapsed (u already marginalised)
+    - VFE = NLL(y; 0, Q + σ²I) + (1/(2σ²)) * tr(K_ff - Q_ff)
+    - Use vfe_objective() or make_vfe_objective() from inference/optimisation/vfe.py
+
+For non-conjugate likelihood:
+    - VFE = E_inertial(phi, eta) + KL(q(u|eta) || p(u|phi))
+    - E_inertial(phi, eta) = E_{q(f|phi,eta)}[-log p(y|f,phi)]
+    - Need to optimize both phi and variational parameters eta jointly
+    - Use InertialEnergy + KL term, with inner optimization over eta
 
 This is a general-purpose optimiser that can use different optimisers (SGD, Adam, etc.)
-and can work with any EnergyTerm.
+and can work with any EnergyTerm that represents VFE.
 """
 from __future__ import annotations
 
@@ -62,28 +70,43 @@ class TypeII(InferenceMethod):
     """
     Type-II optimiser (for ML-II and MAP-II).
     
-    This optimiser finds hyperparameters that minimize the energy function:
-        phi* = argmin_phi E(phi)
+    This optimiser finds hyperparameters that minimize the VFE (Variational Free Energy):
+        phi* = argmin_phi VFE(phi)
+    
+    where VFE(phi) = E_inertial(phi) + KL_term(phi)
+    
+    For Gaussian likelihood:
+        - VFE can be collapsed (u already marginalised)
+        - VFE = NLL(y; 0, Q + σ²I) + (1/(2σ²)) * tr(K_ff - Q_ff)
+        - Use vfe_objective() or make_vfe_objective() from inference/optimisation/vfe.py
+    
+    For non-conjugate likelihood:
+        - VFE = E_inertial(phi, eta) + KL(q(u|eta) || p(u|phi))
+        - E_inertial(phi, eta) = E_{q(f|phi,eta)}[-log p(y|f,phi)]
+        - Need to optimize both phi and variational parameters eta jointly
+        - Use InertialEnergy with inner_steps > 0 to optimize eta, plus KL term
     
     Can be used for:
     - **ML-II**: Optimize VFE objective (no hyperprior)
     - **MAP-II**: Optimize VFE + hyperprior (pass hyperprior to run())
     
-    This can be used with any EnergyTerm, including:
-    - VFE objective (for type-II inference)
-    - InertialEnergy (data-dependent energy)
-    - TargetEnergy (with prior terms)
-    
     The optimiser supports different optimisers (SGD, Adam, RMSprop) and
     can work with or without stochastic energy terms.
     
     Examples:
-        >>> # ML-II: Optimize VFE only
+        >>> # ML-II: Optimize VFE for Gaussian likelihood
         >>> from infodynamics_jax.inference.optimisation.vfe import make_vfe_objective
         >>> vfe_obj = make_vfe_objective(kernel_fn)
         >>> method = TypeII(TypeIICFG(steps=200, lr=1e-2))
         >>> result = method.run(vfe_obj, phi_init, energy_args=(X, Y))
         >>> # No hyperprior → ML-II
+        >>> 
+        >>> # ML-II: Optimize VFE for non-conjugate likelihood
+        >>> from infodynamics_jax.energy import InertialEnergy, InertialCFG
+        >>> # InertialEnergy with inner_steps > 0 optimizes eta jointly with phi
+        >>> energy = InertialEnergy(kernel_fn, likelihood, InertialCFG(inner_steps=10))
+        >>> # Add KL term via energy composition (if needed)
+        >>> result = method.run(energy, phi_init, energy_args=(X, Y))
         >>> 
         >>> # MAP-II: Optimize VFE + hyperprior
         >>> from infodynamics_jax.infodynamics import make_hyperprior
@@ -164,8 +187,20 @@ class TypeII(InferenceMethod):
         """
         Run Type-II optimisation (ML-II or MAP-II).
         
+        This optimizes VFE(phi) = E_inertial(phi) + KL_term(phi).
+        
+        For Gaussian likelihood:
+            - Use vfe_objective() or make_vfe_objective() which computes:
+              VFE = NLL(y; 0, Q + σ²I) + (1/(2σ²)) * tr(K_ff - Q_ff)
+            - VFE is collapsed (u already marginalised)
+        
+        For non-conjugate likelihood:
+            - Use InertialEnergy with inner_steps > 0 to optimize variational parameters eta
+            - VFE = E_inertial(phi, eta) + KL(q(u|eta) || p(u|phi))
+            - Both phi and eta are optimized jointly
+        
         Args:
-            energy: Energy term to minimize (can be any EnergyTerm)
+            energy: Energy term representing VFE (can be VFE objective or InertialEnergy)
             phi_init: Initial parameter state
             key: PRNG key (optional, for stochastic energy)
             energy_args: Additional arguments for energy
@@ -175,16 +210,23 @@ class TypeII(InferenceMethod):
             - For **ML-II**: Pass VFE objective without hyperprior
             - For **MAP-II**: Pass VFE objective and add hyperprior via 
               `infodynamics.run(..., hyperprior=...)` or through TargetEnergy.extra
+            - For non-conjugate likelihood, ensure InertialEnergy has inner_steps > 0
+              to optimize variational parameters eta jointly with phi
         
         Returns:
             TypeIIRun with optimised phi, energy trace, and grad norm trace
         
         Examples:
-            >>> # ML-II: Using with VFE objective
+            >>> # ML-II: Using with VFE objective (Gaussian likelihood)
             >>> from infodynamics_jax.inference.optimisation.vfe import make_vfe_objective
             >>> vfe_obj = make_vfe_objective(kernel_fn)
             >>> method = TypeII(TypeIICFG(steps=200, lr=1e-2))
             >>> result = method.run(vfe_obj, phi_init, energy_args=(X, Y))
+            >>> 
+            >>> # ML-II: Using with InertialEnergy (non-conjugate likelihood)
+            >>> from infodynamics_jax.energy import InertialEnergy, InertialCFG
+            >>> energy = InertialEnergy(kernel_fn, likelihood, InertialCFG(inner_steps=10))
+            >>> result = method.run(energy, phi_init, energy_args=(X, Y))
             >>> 
             >>> # MAP-II: Using with VFE + hyperprior (via run())
             >>> from infodynamics_jax.infodynamics import run, make_hyperprior

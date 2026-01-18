@@ -23,7 +23,7 @@ from typing import Callable
 import jax
 import jax.numpy as jnp
 
-from ...gp.sparsify import diag_Q_ff
+from ...gp.sparsify import diag_Q_ff, _kernel_diag
 from ...gp.utils import safe_cholesky
 
 
@@ -72,7 +72,9 @@ def vfe_objective(phi, X, Y, *, kernel_fn: Callable, residual: str = "fitc", key
     # Compute kernel components (only low-rank, no N×N matrices)
     K_xz = kernel_fn(X, Z, phi.kernel_params)  # (N, M)
     K_zz = kernel_fn(Z, Z, phi.kernel_params)  # (M, M)
-    K_xx_diag = jnp.diag(kernel_fn(X, X, phi.kernel_params))  # (N,) - only diagonal
+    # Use optimized diagonal computation (for RBF and other stationary kernels,
+    # this avoids computing the full N×N matrix)
+    K_xx_diag = _kernel_diag(kernel_fn, X, phi.kernel_params)  # (N,)
     
     # Ensure K_zz symmetry
     K_zz = 0.5 * (K_zz + K_zz.T)
@@ -174,11 +176,14 @@ def vfe_objective(phi, X, Y, *, kernel_fn: Callable, residual: str = "fitc", key
         # 4. Compute trace penalty: (1/(2σ²)) * tr(K_ff - Q_ff)
         # ====================================================================
         # This is the key difference between VFE and FITC
+        # VFE includes trace penalty: (1/(2σ²)) * tr(K_ff - Q_ff)
+        # This penalizes the difference between the full kernel K_ff and 
+        # the low-rank approximation Q_ff
         if residual.lower() == "fitc":
-            # For FITC: tr(K_ff - Q_ff) = tr(R) = sum(K_xx_diag - diag_Q)
-            # Ensure diag_Q doesn't exceed K_xx_diag (numerical stability)
-            diag_Q_safe = jnp.minimum(diag_Q, K_xx_diag * (1.0 + 1e-6))
-            trace_correction = jnp.sum(jnp.maximum(K_xx_diag - diag_Q_safe, 0.0))
+            # For FITC: K_ff = Q + R, where R = diag(K_xx_diag - diag_Q)
+            # So: tr(K_ff - Q_ff) = tr(R) = sum(max(K_xx_diag - diag_Q, 0))
+            # Use the same clipping logic as fitc_diag for consistency
+            trace_correction = jnp.sum(jnp.maximum(K_xx_diag - diag_Q, 0.0))
         else:
             # For SoR/DTC: R = 0, so tr(K_ff - Q_ff) = tr(K_ff) - tr(Q_ff)
             trace_correction = jnp.sum(K_xx_diag - diag_Q)

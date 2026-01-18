@@ -1,3 +1,4 @@
+# infodynamics_jax/inference/rj/state.py
 """
 RJ-MCMC State for Sparse Bayesian GP with Conjugate and Non-Conjugate Likelihoods.
 
@@ -57,11 +58,23 @@ class RJState:
     variational_state: Optional[VariationalState] = None  # For non-conjugate only
     M: jnp.ndarray = None           # () int32
     Z_buf: jnp.ndarray = None       # (M_max,) int32
-    energy: jnp.ndarray = None       # () - current energy value
+    energy: jnp.ndarray = None      # () - current energy value (ELBO / VFE)
+    theta: Optional[jnp.ndarray] = None   # (D+2,) flat hyperparameters
+
+    # Cached GP factors (for rank-1 updates)
+    Kuu: Optional[jnp.ndarray] = None     # (M_max, M_max)
+    Lm: Optional[jnp.ndarray] = None      # (M_max, M_max) - Cholesky of Kuu
+    Kuf: Optional[jnp.ndarray] = None     # (M_max, N)
+    A: Optional[jnp.ndarray] = None       # (M_max, N) - solve(Lm, Kuf)
+    A2: Optional[jnp.ndarray] = None      # (M_max, N) - solve(Lm.T, A) == Kuu^{-1} @ Kuf
 
     # Optional cached matrices (for conjugate case only)
-    Lm: Optional[jnp.ndarray] = None      # (M_max, M_max)
-    A: Optional[jnp.ndarray] = None       # (M_max, N)
+    LB: Optional[jnp.ndarray] = None      # (M_max, M_max) - Cholesky of B = I + (1/sn2) * A @ A.T
+    logdetB: Optional[jnp.ndarray] = None # () - log determinant of B
+    v: Optional[jnp.ndarray] = None        # (M_max,) - solution vector for VFE
+    vnorm2: Optional[jnp.ndarray] = None  # () - ||v||^2
+    sumA2: Optional[jnp.ndarray] = None   # () - sum of squared A elements
+    elbo: Optional[jnp.ndarray] = None    # () - VFE/ELBO value (alias for energy)
 
     def tree_flatten(self):
         """Flatten RJState into children and auxiliary data for PyTree."""
@@ -71,8 +84,18 @@ class RJState:
             self.M,
             self.Z_buf,
             self.energy,
+            self.theta,
+            self.Kuu,
             self.Lm,
+            self.Kuf,
             self.A,
+            self.A2,
+            self.LB,
+            self.logdetB,
+            self.v,
+            self.vnorm2,
+            self.sumA2,
+            self.elbo,
         )
         return children, None
 
@@ -95,6 +118,7 @@ class RJState:
     def is_conjugate(self) -> bool:
         """Check if this state is for conjugate (Gaussian) likelihood."""
         return self.variational_state is None
+    
 
     def get_summary(self) -> Dict[str, Any]:
         """Get summary statistics for logging/debugging."""
@@ -139,6 +163,16 @@ class RJState:
             "M": self.M,
             "Z_buf": self.Z_buf,
             "energy": self.energy,
+            "theta": self.theta,
+            "Kuu": self.Kuu,
             "Lm": self.Lm,
+            "Kuf": self.Kuf,
             "A": self.A,
+            "A2": self.A2,
+            "LB": self.LB,
+            "logdetB": self.logdetB,
+            "v": self.v,
+            "vnorm2": self.vnorm2,
+            "sumA2": self.sumA2,
+            "elbo": self.elbo,
         }

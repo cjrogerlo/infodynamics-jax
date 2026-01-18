@@ -85,6 +85,7 @@ class IBIS(InferenceMethod):
         Y_batch: jnp.ndarray,
         log_likelihood_fn: Optional[Callable] = None,
         energy_kwargs: Optional[dict] = None,
+        total_dataset_size: Optional[int] = None,
     ) -> jnp.ndarray:
         """
         Compute log p(y_batch | φ) for each particle.
@@ -96,6 +97,13 @@ class IBIS(InferenceMethod):
         (GH/MC) to compute log ∫ p(y|f,φ) q(f|φ) df. This is a different computation
         than E[-log p(y|f,φ)].
         
+        For mini-batch IBIS, the weight update should be:
+            log w_i^{(t)} = log w_i^{(t-1)} + (N/|B_t|) Σ_{j∈B_t} log p(y_j | φ_i)
+        
+        where N is the total dataset size and |B_t| is the batch size.
+        This uses pointwise internal energy: -E_{q(f_j | phi)}[-log p(y_j | f_j, phi)]
+        which is proportional to log p(y_j | φ_i) for Gaussian likelihood.
+        
         Args:
             energy: EnergyTerm (typically InertialEnergy)
             particles: Stacked particles pytree [P, ...]
@@ -106,9 +114,13 @@ class IBIS(InferenceMethod):
                 For non-conjugate, this should internally call ansatz (GH/MC).
                 If None, uses -energy as approximation.
             energy_kwargs: Optional kwargs for energy
+            total_dataset_size: Optional total dataset size N for mini-batch scaling.
+                If provided, applies scaling factor (N/|B_t|) for mini-batch IBIS.
+                If None, no scaling is applied (standard IBIS).
         
         Returns:
             log_likelihoods: shape [P] - log p(y_batch | φ_i) for each particle
+                (scaled by N/|B_t| if total_dataset_size is provided)
         
         Note:
             Algorithm layer differences:
@@ -121,7 +133,14 @@ class IBIS(InferenceMethod):
             For non-conjugate: E[-log p(y|f,φ)] ≠ -log p(y|φ) due to Jensen's inequality.
             If accurate log likelihood is needed for non-conjugate, provide log_likelihood_fn
             that internally calls ansatz. Otherwise, -energy is used as approximation.
+            
+            The energy layer computes pointwise internal energy:
+                E(phi) = Σ_j E_{q(f_j | phi)}[-log p(y_j | f_j, phi)]
+            which is the sum of pointwise energies. For mini-batch IBIS, we need to scale
+            this by (N/|B_t|) to get an unbiased estimate.
         """
+        batch_size = X_batch.shape[0]
+        
         if log_likelihood_fn is not None:
             # Use provided log likelihood function (should call ansatz for non-conjugate)
             def loglik_eval(phi):
@@ -129,10 +148,19 @@ class IBIS(InferenceMethod):
                 key = energy_kwargs.get("key", None) if energy_kwargs else None
                 return log_likelihood_fn(phi, X_batch, Y_batch, key=key)
             log_likelihoods = jax.vmap(loglik_eval)(particles)  # [P]
+            
+            # Apply mini-batch scaling if total_dataset_size is provided
+            if total_dataset_size is not None:
+                scale_factor = total_dataset_size / batch_size
+                log_likelihoods = log_likelihoods * scale_factor
+            
             return log_likelihoods
         
         # Fallback: use -energy as approximation
         # This works for Gaussian (accurate) and non-conjugate (approximate)
+        # The energy layer computes pointwise internal energy summed over the batch:
+        #   E(phi) = Σ_{j∈B_t} E_{q(f_j | phi)}[-log p(y_j | f_j, phi)]
+        # For Gaussian likelihood, -E(phi) is proportional to Σ_{j∈B_t} log p(y_j | φ_i)
         if energy_kwargs is None:
             energy_kwargs = {}
         
@@ -149,6 +177,13 @@ class IBIS(InferenceMethod):
         # to compute log ∫ p(y|f,φ) q(f|φ) df, which is different from E[-log p(y|f,φ)]
         log_likelihoods = -energies  # [P]
         
+        # Apply mini-batch scaling if total_dataset_size is provided
+        # This implements: (N/|B_t|) Σ_{j∈B_t} log p(y_j | φ_i)
+        # where the energy layer already computes Σ_{j∈B_t} E_{q(f_j | phi)}[-log p(y_j | f_j, phi)]
+        if total_dataset_size is not None:
+            scale_factor = total_dataset_size / batch_size
+            log_likelihoods = log_likelihoods * scale_factor
+        
         return log_likelihoods
 
     def run(
@@ -160,6 +195,7 @@ class IBIS(InferenceMethod):
         key: jax.random.PRNGKey,
         log_likelihood_fn: Optional[Callable] = None,
         energy_kwargs: Optional[dict] = None,
+        total_dataset_size: Optional[int] = None,
     ) -> IBISRun:
         """
         Run IBIS on a data stream.
@@ -175,6 +211,12 @@ class IBIS(InferenceMethod):
                 log ∫ p(y|f,φ) q(f|φ) df, which is different from E[-log p(y|f,φ)].
                 If None, uses -energy(phi, X, Y) as approximation.
             energy_kwargs: Optional kwargs for energy
+            total_dataset_size: Optional total dataset size N for mini-batch IBIS scaling.
+                If provided, applies scaling factor (N/|B_t|) for mini-batch IBIS:
+                    log w_i^{(t)} = log w_i^{(t-1)} + (N/|B_t|) Σ_{j∈B_t} log p(y_j | φ_i)
+                where the energy layer computes pointwise internal energy:
+                    E(phi) = Σ_{j∈B_t} E_{q(f_j | phi)}[-log p(y_j | f_j, phi)]
+                If None, no scaling is applied (standard IBIS).
         
         Returns:
             IBISRun with particles, log weights, ESS trace, and logZ trace
@@ -182,6 +224,12 @@ class IBIS(InferenceMethod):
         Note:
             Weight update: logw += log p(y_t | φ)
             This is DATA STREAMING, not β-annealing.
+            
+            For mini-batch IBIS, the weight update uses pointwise internal energy:
+                log w_i^{(t)} = log w_i^{(t-1)} + (N/|B_t|) Σ_{j∈B_t} log p(y_j | φ_i)
+            where the energy layer computes:
+                E(phi) = Σ_{j∈B_t} E_{q(f_j | phi)}[-log p(y_j | f_j, phi)]
+            and -E(phi) is proportional to Σ_{j∈B_t} log p(y_j | φ_i) for Gaussian likelihood.
             
             Log likelihood computation:
             - Gaussian likelihood: -energy is accurate (up to constant that cancels in weight ratios)
@@ -228,6 +276,8 @@ class IBIS(InferenceMethod):
             key, key_resample, key_rejuv = random.split(key, 3)
             
             # IBIS weight update: logw += log p(y_t | φ)
+            # For mini-batch IBIS: logw += (N/|B_t|) Σ_{j∈B_t} log p(y_j | φ)
+            # This uses pointwise internal energy computed by the energy layer
             # This is the KEY difference from β-annealed SMC
             log_likelihood_increment = self._compute_log_likelihood_increment(
                 energy=energy,
@@ -236,6 +286,7 @@ class IBIS(InferenceMethod):
                 Y_batch=batch.Y,
                 log_likelihood_fn=log_likelihood_fn,
                 energy_kwargs=energy_kwargs,
+                total_dataset_size=total_dataset_size,
             )
             
             # Store normalized weights BEFORE resampling for logZ calculation
@@ -331,6 +382,10 @@ class IBIS(InferenceMethod):
             return (particles, logw, logZ_est, accumulated_data, key), (ess_trace, logZ_trace)
         
         # Process data stream
+        # Note: Using Python loop instead of lax.scan because:
+        # 1. Data batches may have variable sizes
+        # 2. accumulated_data needs to be concatenated incrementally
+        # 3. The step function is already JIT-compiled internally
         ess_trace_list = []
         logZ_trace_list = []
         for t, batch in enumerate(data_batches):

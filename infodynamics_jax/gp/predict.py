@@ -13,7 +13,7 @@ from typing import Callable
 import jax
 import jax.numpy as jnp
 
-from .sparsify import diag_Q_ff
+from .sparsify import diag_Q_ff, _kernel_diag
 from .utils import safe_cholesky
 
 
@@ -73,8 +73,10 @@ def predict_typeii(
     K_train_Z = kernel_fn(X_train, Z, phi.kernel_params)  # (N_train, M)
     K_test_Z = kernel_fn(X_test, Z, phi.kernel_params)  # (N_test, M)
     K_ZZ = kernel_fn(Z, Z, phi.kernel_params)  # (M, M)
-    K_train_train_diag = jnp.diag(kernel_fn(X_train, X_train, phi.kernel_params))  # (N_train,)
-    K_test_test_diag = jnp.diag(kernel_fn(X_test, X_test, phi.kernel_params))  # (N_test,)
+    # Use optimized diagonal computation (for RBF and other stationary kernels,
+    # this avoids computing the full N×N matrix)
+    K_train_train_diag = _kernel_diag(kernel_fn, X_train, phi.kernel_params)  # (N_train,)
+    K_test_test_diag = _kernel_diag(kernel_fn, X_test, phi.kernel_params)  # (N_test,)
     
     # Ensure K_ZZ symmetry
     K_ZZ = 0.5 * (K_ZZ + K_ZZ.T)
@@ -282,18 +284,19 @@ def predict_typeii(
         
         return mu_test, var_pred  # (N_test,), (N_test,)
     
-    # Compute for each output dimension
+    # Compute for each output dimension (vectorized)
     if D == 1:
         mu, var = predict_for_dim(Y_train[:, 0], noise_var[0])
     else:
-        mu_list = []
-        var_list = []
-        for d in range(D):
-            mu_d, var_d = predict_for_dim(Y_train[:, d], noise_var[d])
-            mu_list.append(mu_d)
-            var_list.append(var_d)
-        mu = jnp.stack(mu_list, axis=1)  # (N_test, D)
-        var = jnp.stack(var_list, axis=1)  # (N_test, D)
+        # Vectorize over output dimensions using vmap
+        def predict_single_dim(Y_d, noise_var_d):
+            return predict_for_dim(Y_d, noise_var_d)
+        
+        mu_d, var_d = jax.vmap(predict_single_dim, in_axes=(1, 0), out_axes=(1, 1))(
+            Y_train, noise_var
+        )
+        mu = mu_d  # (N_test, D)
+        var = var_d  # (N_test, D)
     
     # Squeeze to 1D if needed
     mu = mu.squeeze()

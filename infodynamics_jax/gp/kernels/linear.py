@@ -1,4 +1,4 @@
-# infodynamics_jax/kernels/linear.py
+# infodynamics_jax/gp/kernels/linear.py
 import jax.numpy as jnp
 from .params import KernelParams
 

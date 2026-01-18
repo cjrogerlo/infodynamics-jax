@@ -1,3 +1,4 @@
+# infodynamics_jax/gp/likelihoods/negative_binomial.py
 import jax.numpy as jnp
 import jax.nn as jnn
 

@@ -3,8 +3,10 @@ Plotting style configuration.
 """
 import matplotlib.pyplot as plt
 import matplotlib
+import matplotlib.font_manager as fm
 from matplotlib.colors import LinearSegmentedColormap, ListedColormap
 from typing import Dict, Optional, Tuple, Literal
+import platform
 
 
 # Color scheme
@@ -26,7 +28,7 @@ PALETTES: Dict[str, list] = {
 
 
 def setup_plot_style():
-    """Setup matplotlib style."""
+    """Setup matplotlib style with Chinese font support."""
     plt.style.use('default')
     matplotlib.rcParams['figure.dpi'] = 100
     matplotlib.rcParams['savefig.dpi'] = 100
@@ -37,6 +39,64 @@ def setup_plot_style():
     matplotlib.rcParams['ytick.labelsize'] = 9
     matplotlib.rcParams['legend.fontsize'] = 9
     matplotlib.rcParams['figure.titlesize'] = 12
+    
+    # Setup Chinese font support
+    # Try to find an available Chinese font on the system
+    system = platform.system()
+    
+    # List of potential Chinese fonts, ordered by preference
+    chinese_fonts = []
+    if system == 'Darwin':  # macOS
+        chinese_fonts = [
+            'PingFang TC',      # 繁體中文
+            'PingFang SC',      # 簡體中文
+            'STHeiti',          # 華文黑體
+            'Heiti TC',         # 黑體-繁體中文
+            'Heiti SC',         # 黑體-簡體中文
+            'Arial Unicode MS', # Arial Unicode (if installed)
+        ]
+    elif system == 'Linux':
+        chinese_fonts = [
+            'WenQuanYi Micro Hei',
+            'WenQuanYi Zen Hei',
+            'Noto Sans CJK TC',
+            'Noto Sans CJK SC',
+            'Droid Sans Fallback',
+        ]
+    elif system == 'Windows':
+        chinese_fonts = [
+            'Microsoft YaHei',
+            'Microsoft JhengHei',
+            'SimHei',
+            'SimSun',
+        ]
+    
+    # Get available fonts
+    available_fonts = [f.name for f in fm.fontManager.ttflist]
+    
+    # Find the first available Chinese font
+    chinese_font = None
+    for font in chinese_fonts:
+        if font in available_fonts:
+            chinese_font = font
+            break
+    
+    # Set font family: use Chinese font if available, otherwise keep default
+    if chinese_font:
+        # Prepend Chinese font to sans-serif font list
+        current_sans_serif = matplotlib.rcParams.get('font.sans-serif', ['Arial', 'DejaVu Sans'])
+        if isinstance(current_sans_serif, str):
+            current_sans_serif = [current_sans_serif]
+        # Remove duplicates and ensure Chinese font is first
+        font_list = [chinese_font] + [f for f in current_sans_serif if f != chinese_font]
+        matplotlib.rcParams['font.sans-serif'] = font_list
+    else:
+        # If no Chinese font found, at least try to use a font that supports Unicode
+        # This won't fix the issue but won't break anything either
+        pass
+    
+    # Fix negative sign rendering issue with some fonts
+    matplotlib.rcParams['axes.unicode_minus'] = False
 
 
 def plot_with_uncertainty(

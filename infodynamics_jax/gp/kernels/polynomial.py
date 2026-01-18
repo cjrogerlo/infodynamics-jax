@@ -1,4 +1,4 @@
-# infodynamics_jax/kernels/polynomial.py
+# infodynamics_jax/gp/kernels/polynomial.py
 import jax.numpy as jnp
 from .params import KernelParams
 

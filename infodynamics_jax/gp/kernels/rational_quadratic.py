@@ -1,4 +1,4 @@
-# infodynamics_jax/kernels/rational_quadratic.py
+# infodynamics_jax/gp/kernels/rational_quadratic.py
 import jax.numpy as jnp
 from .params import KernelParams
 from .utils import scaled_sqdist

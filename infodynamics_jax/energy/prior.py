@@ -42,8 +42,20 @@ Version: v0
 Status:  experimental but structurally frozen
 
 Author: Chi-Jen Roger Lo
-License: MIT License
+License: Apache License 2.0
 Copyright (c) 2024 Chi-Jen Roger Lo
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """
 
 from dataclasses import dataclass
@@ -173,26 +185,36 @@ def _grid_edges_4n(H: int, W: int):
     This is a prior assumption about latent space topology,
     not a data-dependent tool.
     """
-    edges = []
-
     def idx(r, c):
         """Row-major index: i = row * W + col"""
         return r * W + c
 
-    for r in range(H):
-        for c in range(W):
-            i = idx(r, c)
-            # Right neighbor
-            if c + 1 < W:
-                edges.append((i, idx(r, c + 1)))
-            # Bottom neighbor
-            if r + 1 < H:
-                edges.append((i, idx(r + 1, c)))
-
-    if len(edges) == 0:
-        return jnp.array([], dtype=jnp.int32).reshape(0, 2)
-
-    return jnp.array(edges, dtype=jnp.int32)
+    # Vectorized approach: generate all possible edges, then filter
+    # Right edges: (r, c) -> (r, c+1) for all valid pairs
+    r_right = jnp.arange(H)[:, None]  # (H, 1)
+    c_right = jnp.arange(W - 1)[None, :]  # (1, W-1)
+    i_right_from = (r_right * W + c_right).flatten()  # (H*(W-1),)
+    i_right_to = (r_right * W + (c_right + 1)).flatten()  # (H*(W-1),)
+    right_edges = jnp.stack([i_right_from, i_right_to], axis=1)  # (H*(W-1), 2)
+    
+    # Bottom edges: (r, c) -> (r+1, c) for all valid pairs
+    r_bottom = jnp.arange(H - 1)[:, None]  # (H-1, 1)
+    c_bottom = jnp.arange(W)[None, :]  # (1, W)
+    i_bottom_from = (r_bottom * W + c_bottom).flatten()  # ((H-1)*W,)
+    i_bottom_to = ((r_bottom + 1) * W + c_bottom).flatten()  # ((H-1)*W,)
+    bottom_edges = jnp.stack([i_bottom_from, i_bottom_to], axis=1)  # ((H-1)*W, 2)
+    
+    # Concatenate all edges
+    if H * (W - 1) > 0 and (H - 1) * W > 0:
+        edges = jnp.concatenate([right_edges, bottom_edges], axis=0)
+    elif H * (W - 1) > 0:
+        edges = right_edges
+    elif (H - 1) * W > 0:
+        edges = bottom_edges
+    else:
+        edges = jnp.array([], dtype=jnp.int32).reshape(0, 2)
+    
+    return edges
 
 
 def _grid_edges_8n(H: int, W: int):
@@ -202,32 +224,38 @@ def _grid_edges_8n(H: int, W: int):
     Includes diagonal connections for more isotropic shape priors.
     Use when 4-neighbour creates axis-aligned artifacts.
     """
-    edges = []
-
     def idx(r, c):
         """Row-major index: i = row * W + col"""
         return r * W + c
 
-    for r in range(H):
-        for c in range(W):
-            i = idx(r, c)
-            # Right neighbor
-            if c + 1 < W:
-                edges.append((i, idx(r, c + 1)))
-            # Bottom neighbor
-            if r + 1 < H:
-                edges.append((i, idx(r + 1, c)))
-            # Diagonal SE (southeast)
-            if r + 1 < H and c + 1 < W:
-                edges.append((i, idx(r + 1, c + 1)))
-            # Diagonal SW (southwest)
-            if r + 1 < H and c - 1 >= 0:
-                edges.append((i, idx(r + 1, c - 1)))
-
-    if len(edges) == 0:
-        return jnp.array([], dtype=jnp.int32).reshape(0, 2)
-
-    return jnp.array(edges, dtype=jnp.int32)
+    # Start with 4-neighbor edges
+    edges_4n = _grid_edges_4n(H, W)
+    
+    # Add diagonal SE edges: (r, c) -> (r+1, c+1) for valid pairs
+    r_se = jnp.arange(H - 1)[:, None]  # (H-1, 1)
+    c_se = jnp.arange(W - 1)[None, :]  # (1, W-1)
+    i_se_from = (r_se * W + c_se).flatten()  # ((H-1)*(W-1),)
+    i_se_to = ((r_se + 1) * W + (c_se + 1)).flatten()  # ((H-1)*(W-1),)
+    se_edges = jnp.stack([i_se_from, i_se_to], axis=1)  # ((H-1)*(W-1), 2)
+    
+    # Add diagonal SW edges: (r, c) -> (r+1, c-1) for valid pairs
+    r_sw = jnp.arange(H - 1)[:, None]  # (H-1, 1)
+    c_sw = jnp.arange(1, W)[None, :]  # (1, W-1)
+    i_sw_from = (r_sw * W + c_sw).flatten()  # ((H-1)*(W-1),)
+    i_sw_to = ((r_sw + 1) * W + (c_sw - 1)).flatten()  # ((H-1)*(W-1),)
+    sw_edges = jnp.stack([i_sw_from, i_sw_to], axis=1)  # ((H-1)*(W-1), 2)
+    
+    # Concatenate all edges
+    edge_list = [edges_4n]
+    if (H - 1) * (W - 1) > 0:
+        edge_list.extend([se_edges, sw_edges])
+    
+    if len(edge_list) > 0:
+        edges = jnp.concatenate(edge_list, axis=0)
+    else:
+        edges = jnp.array([], dtype=jnp.int32).reshape(0, 2)
+    
+    return edges
 
 
 # ============================================================

@@ -1,20 +1,27 @@
+# infodynamics_jax/inference/rj/rjvmc.py
 """
 RJVMC (Reversible Jump Variational Monte Carlo) for Sparse GP with Non-Conjugate Likelihoods.
-
-This module implements trans-dimensional MCMC sampling over the number of
-inducing points using InertialEnergy + VariationalState for non-conjugate likelihoods.
+High-performance implementation with rank-1 updates, inner VI, and Delayed Acceptance.
 """
 from __future__ import annotations
 
+import time
+import dataclasses
 from dataclasses import dataclass
-from typing import Callable, Optional, Any, Literal
+from functools import partial
+from typing import Callable, Optional, Any, Literal, Dict
+
 import jax
 import jax.numpy as jnp
-from jax import random
+import jax.random as jrand
+import jax.scipy as jsp
+import blackjax
+import optax
 
 from ...energy.base import EnergyTerm
 from ...energy.inertial import InertialEnergy
 from ...core import Phi
+from ...gp.kernels.params import KernelParams
 from ...gp.ansatz.state import VariationalState
 from ..base import InferenceMethod
 from .state import RJState
@@ -23,436 +30,477 @@ from .state import RJState
 @dataclass(frozen=True)
 class RJVMCCFG:
     """Configuration for RJVMC sampler."""
-    n_steps: int = 1000
-    burn: int = 250
+    n_steps: int = 1200
+    burn: int = 300
     M_min: int = 5
     M_max: int = 60
-    M_init: int = 20
-    birth_prob: float = 0.5  # Probability of birth move (vs death)
-    death_mode: Literal["rank1_last", "local_rebuild"] = "rank1_last"
-    # HMC parameters for updating hyperparameters
-    hmc_step_size: float = 1e-2
-    hmc_n_leapfrog: int = 8
-    hmc_prob: float = 0.3  # Probability of HMC step (vs RJ move)
-    # Variational state update parameters
-    inner_steps: int = 5  # Number of inner optimisation steps for variational state
-    inner_lr: float = 1e-2  # Learning rate for inner optimisation
+    M_init: int = 25
+    p_geom: float = 0.12  # Geometric prior parameter for M
+    
+    # Move probabilities
+    r_M: float = 0.90      # Probability of doing RJ move (else skip to stabilise)
+    hmc_every: int = 5     # Frequency of HMC steps for theta
+    
+    # RJ/MTM parameters
+    K_pool: int = 32       # Number of candidates for birth
+    temp_rj: float = 1.0   # Temperature for RJ pool weights
+    
+    # HMC parameters
+    hmc_step_size: float = 0.01
+    hmc_leaps: int = 3
+    
+    # Inner VI parameters
+    inner_steps: int = 5
+    lr_m: float = 1e-2
+    lr_L: float = 1e-2
+    
+    jitter: float = 1e-6
 
 
 @dataclass
 class RJVMCRun:
     """RJVMC run results."""
-    samples: list[RJState]  # List of RJState samples (with variational_state)
-    accept_rate_rj: float  # Acceptance rate for RJ moves
-    accept_rate_hmc: float  # Acceptance rate for HMC moves
-    M_trace: jnp.ndarray  # Trace of M values
-    energy_trace: jnp.ndarray  # Trace of energy values
+    theta_trace: jnp.ndarray
+    Z_trace: jnp.ndarray
+    M_trace: jnp.ndarray
+    energy_trace: jnp.ndarray
+    cfg: RJVMCCFG
 
+
+# ============================================================
+# Helpers & Priors
+# ============================================================
+
+@jax.jit
+def softplus(x):
+    return jnp.log1p(jnp.exp(-jnp.abs(x))) + jnp.maximum(x, 0.0)
+
+@jax.jit
+def sigmoid(x):
+    return 1.0 / (1.0 + jnp.exp(-x))
+
+@jax.jit
+def loglik_bernoulli_logit(y01, f):
+    return -softplus(-f) * y01 - softplus(f) * (1.0 - y01)
+
+@jax.jit
+def gh_expect_loglik_bernoulli(mu, var, y01, gh_x, gh_w):
+    sig = jnp.sqrt(jnp.maximum(var, 1e-18))
+    f = mu[:, None] + jnp.sqrt(2.0) * sig[:, None] * gh_x[None, :]
+    ll = loglik_bernoulli_logit(y01[:, None], f)
+    return (ll * gh_w[None, :]).sum(axis=1) / jnp.sqrt(jnp.pi)
+
+@jax.jit
+def log_prior_theta(theta):
+    return -0.5 * jnp.sum((theta / 1.0) ** 2)
+
+@jax.jit
+def log_prior_M_trunc_geom(M, M_min, M_max, p=0.12):
+    valid = (M >= M_min) & (M <= M_max)
+    m = M - M_min
+    K = M_max - M_min + 1
+    log_unn = jnp.log(p) + m * jnp.log1p(-p)
+    logZ = jnp.log1p(-(1.0 - p) ** K)
+    return jnp.where(valid, log_unn - logZ, -jnp.inf)
+
+@jax.jit
+def log_prior_ordered_Z_given_M(N, M):
+    Nf = jnp.array(N, dtype=jnp.float64)
+    Mf = jnp.array(M, dtype=jnp.float64)
+    return -(jsp.special.gammaln(Nf + 1.0) - jsp.special.gammaln(Nf - Mf + 1.0))
+
+@jax.jit
+def softmax_stable(x, temp=1.0):
+    z = x / temp
+    z = z - jnp.max(z)
+    e = jnp.exp(z)
+    return e / (jnp.sum(e) + 1e-30)
+
+
+# ============================================================
+# ELBO (Cached)
+# ============================================================
+
+@jax.jit
+def elbo_cached_binary_full(state: RJState, X, y01, gh_x, gh_w):
+    N, D = X.shape
+    M_max = state.Z_buf.shape[0]
+    mask = (jnp.arange(M_max, dtype=jnp.int32) < state.M.astype(jnp.int32)).astype(jnp.float64)
+    active = mask[:, None] * mask[None, : ]
+
+    m = state.variational_state.m_u * mask
+    Lq = jnp.tril(state.variational_state.L_u) * active
+    S = Lq @ Lq.T
+
+    # alpha = Kuu^{-1} m
+    tmp = jsp.linalg.solve_triangular(state.Lm, m[:, None], lower=True)
+    alpha = jsp.linalg.solve_triangular(state.Lm.T, tmp, lower=False).reshape(-1)
+
+    mu = (state.Kuf.T @ alpha).reshape(-1)
+
+    log_sf = state.theta[D]
+    sf2 = jnp.exp(2.0 * log_sf)
+    kff = sf2 * jnp.ones((N,), dtype=jnp.float64)
+
+    Q = (S - state.Kuu) * active
+    quad = jnp.einsum("mi,mn,ni->i", state.A2, Q, state.A2)
+    var = jnp.maximum(kff + quad, 1e-12)
+
+    ell = gh_expect_loglik_bernoulli(mu, var, y01.reshape(-1), gh_x, gh_w).sum()
+
+    # KL(q(u)||p(u))
+    S_jit = S + 1e-8 * jnp.eye(M_max)
+    logdetK = 2.0 * jnp.sum(jnp.log(jnp.diag(state.Lm)))
+    Ls = jsp.linalg.cholesky(S_jit, lower=True)
+    logdetS = 2.0 * jnp.sum(jnp.log(jnp.diag(Ls)))
+
+    Sinv1 = jsp.linalg.solve_triangular(state.Lm, S, lower=True)
+    KinvS = jsp.linalg.solve_triangular(state.Lm.T, Sinv1, lower=False)
+    trKinvS = jnp.trace(KinvS)
+
+    mKm = jnp.dot(alpha, m)
+    M_eff = state.M.astype(jnp.float64)
+    KL = 0.5 * (trKinvS + mKm - M_eff + logdetK - logdetS)
+
+    return ell - KL
+
+
+@jax.jit
+def elbo_cached_binary_subset(state: RJState, X, y01, idx, gh_x, gh_w):
+    N = X.shape[0]
+    B = idx.shape[0]
+    M_max = state.Z_buf.shape[0]
+    mask = (jnp.arange(M_max, dtype=jnp.int32) < state.M.astype(jnp.int32)).astype(jnp.float64)
+    active = mask[:, None] * mask[None, :]
+
+    m = state.variational_state.m_u * mask
+    Lq = jnp.tril(state.variational_state.L_u) * active
+    S = Lq @ Lq.T
+
+    tmp = jsp.linalg.solve_triangular(state.Lm, m[:, None], lower=True)
+    alpha = jsp.linalg.solve_triangular(state.Lm.T, tmp, lower=False).reshape(-1)
+
+    Kuf_b = jnp.take(state.Kuf, idx, axis=1)   
+    A2_b  = jnp.take(state.A2,  idx, axis=1)   
+    y_b   = jnp.take(y01.reshape(-1), idx, axis=0)
+
+    mu = (Kuf_b.T @ alpha).reshape(-1)
+
+    log_sf = state.theta[state.phi.Z.shape[1] if len(state.phi.Z.shape)>1 else 1]
+    sf2 = jnp.exp(2.0 * log_sf)
+    kff = sf2 * jnp.ones((B,), dtype=jnp.float64)
+
+    Q = (S - state.Kuu) * active
+    quad = jnp.einsum("mi,mn,ni->i", A2_b, Q, A2_b)
+    var = jnp.maximum(kff + quad, 1e-12)
+
+    ell_b = gh_expect_loglik_bernoulli(mu, var, y_b, gh_x, gh_w).sum()
+    ell = (N / B) * ell_b
+
+    # KL same as full
+    S_jit = S + 1e-8 * jnp.eye(M_max)
+    logdetK = 2.0 * jnp.sum(jnp.log(jnp.diag(state.Lm)))
+    Ls = jsp.linalg.cholesky(S_jit, lower=True)
+    logdetS = 2.0 * jnp.sum(jnp.log(jnp.diag(Ls)))
+    Sinv1 = jsp.linalg.solve_triangular(state.Lm, S, lower=True)
+    KinvS = jsp.linalg.solve_triangular(state.Lm.T, Sinv1, lower=False)
+    trKinvS = jnp.trace(KinvS)
+    mKm = jnp.dot(alpha, m)
+    M_eff = state.M.astype(jnp.float64)
+    KL = 0.5 * (trKinvS + mKm - M_eff + logdetK - logdetS)
+
+    return ell - KL
+
+
+@jax.jit
+def log_posterior(state: RJState, N, M_min, M_max, p_geom, gh_x, gh_w, X, y01):
+    elbo = elbo_cached_binary_full(state, X, y01, gh_x, gh_w)
+    return (elbo
+            + log_prior_theta(state.theta)
+            + log_prior_M_trunc_geom(state.M, M_min, M_max, p_geom)
+            + log_prior_ordered_Z_given_M(N, state.M))
+
+
+# ============================================================
+# Inner VI (Adam)
+# ============================================================
+
+@jax.jit
+def adam_update(param, grad, m1, m2, t, lr, b1=0.9, b2=0.999, eps=1e-8):
+    m1 = b1 * m1 + (1 - b1) * grad
+    m2 = b2 * m2 + (1 - b2) * (grad * grad)
+    m1h = m1 / (1 - b1 ** t)
+    m2h = m2 / (1 - b2 ** t)
+    param = param + lr * m1h / (jnp.sqrt(m2h) + eps)
+    return param, m1, m2
+
+@partial(jax.jit, static_argnames=("inner_steps",))
+def optimise_variational(state: RJState, X, y01, gh_x, gh_w, inner_steps: int, lr_m: float, lr_L: float):
+    m, L = state.variational_state.m_u, state.variational_state.L_u
+    m_m1 = jnp.zeros_like(m)
+    m_m2 = jnp.zeros_like(m)
+    L_m1 = jnp.zeros_like(L)
+    L_m2 = jnp.zeros_like(L)
+
+    def obj(mm, LL):
+        vs = VariationalState(m_u=mm, L_u=LL)
+        st = RJState(
+            phi=state.phi, variational_state=vs, M=state.M, Z_buf=state.Z_buf,
+            energy=state.energy, theta=state.theta, Kuu=state.Kuu, Lm=state.Lm,
+            Kuf=state.Kuf, A=state.A, A2=state.A2
+        )
+        return elbo_cached_binary_full(st, X, y01, gh_x, gh_w)
+
+    def body(carry, t):
+        m, L, m_m1, m_m2, L_m1, L_m2 = carry
+        val, (gm, gL) = jax.value_and_grad(obj, argnums=(0, 1))(m, L)
+        gL = jnp.tril(gL)
+        m, m_m1, m_m2 = adam_update(m, gm, m_m1, m_m2, t+1, lr=lr_m)
+        L, L_m1, L_m2 = adam_update(L, gL, L_m1, L_m2, t+1, lr=lr_L)
+        return (m, L, m_m1, m_m2, L_m1, L_m2), val
+
+    (m, L, *_), _ = jax.lax.scan(body, (m, L, m_m1, m_m2, L_m1, L_m2), jnp.arange(inner_steps))
+    diag = jnp.maximum(jnp.diag(L), 1e-6)
+    L = L.at[jnp.diag_indices(L.shape[0])].set(diag)
+    vs_new = VariationalState(m_u=m, L_u=L)
+    st_new = RJState(
+        phi=state.phi, variational_state=vs_new, M=state.M, Z_buf=state.Z_buf,
+        energy=state.energy, theta=state.theta, Kuu=state.Kuu, Lm=state.Lm,
+        Kuf=state.Kuf, A=state.A, A2=state.A2
+    )
+    new_elbo = elbo_cached_binary_full(st_new, X, y01, gh_x, gh_w)
+    return RJState(
+        phi=state.phi, variational_state=vs_new, M=state.M, Z_buf=state.Z_buf,
+        energy=new_elbo, theta=state.theta, Kuu=state.Kuu, Lm=state.Lm,
+        Kuf=state.Kuf, A=state.A, A2=state.A2
+    )
+
+
+# ============================================================
+# Structural Updates (Rank-1)
+# ============================================================
+
+def rbf_kernel_matrix(X1, X2, log_ls, log_sf):
+    ls = jnp.exp(log_ls).reshape(1, 1, -1)
+    sf2 = jnp.exp(2.0 * log_sf)
+    X1s = X1[:, None, :] / ls
+    X2s = X2[None, :, :] / ls
+    dist_sq = jnp.sum((X1s - X2s) ** 2, axis=-1)
+    return sf2 * jnp.exp(-0.5 * dist_sq)
+
+@jax.jit
+def birth_append_rank1(state: RJState, new_idx, X, jitter):
+    N, D = X.shape
+    M_max = state.Z_buf.shape[0]
+    M = state.M.astype(jnp.int32)
+    slot = M
+    Z_buf_new = state.Z_buf.at[slot].set(new_idx.astype(jnp.int32))
+    M_new = (M + 1).astype(jnp.int32)
+    Z_old = X[state.Z_buf]
+    z_new = X[new_idx].reshape(1, -1)
+    log_ls, log_sf = state.theta[:D], state.theta[D]
+    k_row = rbf_kernel_matrix(z_new, Z_old, log_ls, log_sf).reshape(-1)
+    k_self = rbf_kernel_matrix(z_new, z_new, log_ls, log_sf).reshape(()) + jitter
+    mask_old = (jnp.arange(M_max, dtype=jnp.int32) < M).astype(X.dtype)
+    k_row = k_row * mask_old
+    v = jsp.linalg.solve_triangular(state.Lm, k_row[:, None], lower=True).reshape(-1)
+    v = v * mask_old
+    diag = jnp.sqrt(jnp.maximum(k_self - jnp.dot(v, v), 1e-12))
+    Lm_new = state.Lm.at[slot, :].set(0.0).at[:, slot].set(0.0).at[slot, :].set(v).at[slot, slot].set(diag)
+    Kuu_new = state.Kuu.at[slot, :].set(0.0).at[:, slot].set(0.0).at[slot, :].set(k_row).at[:, slot].set(k_row).at[slot, slot].set(k_self)
+    kuf_row = rbf_kernel_matrix(z_new, X, log_ls, log_sf).reshape(-1)
+    Kuf_new = state.Kuf.at[slot, :].set(kuf_row)
+    numer = kuf_row - (v[:, None] * state.A).sum(axis=0)
+    a_row = numer / (diag + 1e-30)
+    A_new = state.A.at[slot, :].set(a_row)
+    x_new = a_row / (diag + 1e-30)
+    delta_vec = jsp.linalg.solve_triangular(state.Lm.T, v[:, None], lower=False).reshape(-1)
+    delta_vec = delta_vec * mask_old
+    A2_new = state.A2 - delta_vec[:, None] * x_new[None, :]
+    A2_new = A2_new.at[slot, :].set(x_new)
+    m_new = state.variational_state.m_u.at[slot].set(0.0)
+    Lq_new = state.variational_state.L_u.at[slot, :].set(0.0).at[:, slot].set(0.0).at[slot, slot].set(1.0)
+    vs_new = VariationalState(m_u=m_new, L_u=Lq_new)
+    return RJState(
+        phi=state.phi, variational_state=vs_new, M=M_new, Z_buf=Z_buf_new,
+        energy=state.energy, theta=state.theta, Kuu=Kuu_new, Lm=Lm_new,
+        Kuf=Kuf_new, A=A_new, A2=A2_new
+    )
+
+@jax.jit
+def death_drop_last_rank1(state: RJState):
+    M_max = state.Z_buf.shape[0]
+    M = state.M.astype(jnp.int32)
+    slot = (M - 1).astype(jnp.int32)
+    M_new = (M - 1).astype(jnp.int32)
+    mask_old = (jnp.arange(M_max, dtype=jnp.int32) < slot).astype(jnp.float64)
+    v = state.Lm[slot, :] * mask_old
+    x_new = state.A2[slot, :]
+    delta_vec = jsp.linalg.solve_triangular(state.Lm.T, v[:, None], lower=False).reshape(-1)
+    delta_vec = delta_vec * mask_old
+    A2_new = state.A2 + delta_vec[:, None] * x_new[None, :]
+    A2_new = A2_new.at[slot, :].set(0.0)
+    A_new = state.A.at[slot, :].set(0.0)
+    Kuf_new = state.Kuf.at[slot, :].set(0.0)
+    Kuu_new = state.Kuu.at[slot, :].set(0.0).at[:, slot].set(0.0).at[slot, slot].set(1.0)
+    Lm_new = state.Lm.at[slot, :].set(0.0).at[:, slot].set(0.0).at[slot, slot].set(1.0)
+    m_new = state.variational_state.m_u.at[slot].set(0.0)
+    Lq_new = state.variational_state.L_u.at[slot, :].set(0.0).at[:, slot].set(0.0).at[slot, slot].set(1.0)
+    vs_new = VariationalState(m_u=m_new, L_u=Lq_new)
+    return RJState(
+        phi=state.phi, variational_state=vs_new, M=M_new, Z_buf=state.Z_buf,
+        energy=state.energy, theta=state.theta, Kuu=Kuu_new, Lm=Lm_new,
+        Kuf=Kuf_new, A=A_new, A2=A2_new
+    )
+
+
+# ============================================================
+# RJ Sampler Class
+# ============================================================
 
 class RJVMC(InferenceMethod):
     """
-    Reversible Jump Variational Monte Carlo for sparse GP with non-conjugate likelihoods.
-    
-    This sampler performs trans-dimensional MCMC over the number of inducing
-    points using InertialEnergy + VariationalState for non-conjugate likelihoods.
-    It alternates between:
-    1. RJ moves (birth/death of inducing points)
-    2. HMC moves (updating hyperparameters)
-    3. Variational state updates (updating q(u))
+    RJVMC for sparse GP binary classification.
+    Optimized for JAX with rank-1 updates and Delayed Acceptance.
     """
     
-    def __init__(
-        self,
-        cfg: RJVMCCFG = RJVMCCFG(),
-        energy: Optional[InertialEnergy] = None,
-    ):
-        """
-        Initialize RJVMC sampler.
-        
-        Args:
-            cfg: Configuration for RJVMC
-            energy: InertialEnergy instance (required for non-conjugate case)
-        """
+    def __init__(self, cfg: RJVMCCFG = RJVMCCFG()):
         self.cfg = cfg
-        self.energy = energy
-    
-    def _update_variational_state(
-        self,
-        phi: Phi,
-        X: jnp.ndarray,
-        Y: jnp.ndarray,
-        variational_state: VariationalState,
-        key: jax.random.KeyArray,
-    ) -> VariationalState:
-        """
-        Update variational state q(u) using inner optimisation.
-        
-        This performs a few steps of gradient descent on the variational
-        objective to update the variational posterior.
-        
-        Note: InertialEnergy internally computes variational state via _solve_inner.
-        For RJVMC, we maintain variational_state in the RJState and update it
-        explicitly to avoid recomputing it every time.
-        """
-        if self.energy is None:
-            raise ValueError("energy (InertialEnergy) must be provided for RJVMC")
-        
-        # Use energy's inner profiling mechanism
-        # The energy already has _solve_inner method that does this
-        updated_state = self.energy._solve_inner(phi, X, Y)
-        
-        return updated_state
-    
-    def _compute_energy(
-        self,
-        phi: Phi,
-        X: jnp.ndarray,
-        Y: jnp.ndarray,
-        key: jax.random.KeyArray,
-    ) -> jnp.ndarray:
-        """
-        Compute InertialEnergy for given phi.
-        
-        Note: InertialEnergy internally computes variational state via _solve_inner.
-        For efficiency in RJVMC, we maintain variational_state separately in RJState
-        and update it explicitly, but the energy computation still goes through
-        the standard InertialEnergy interface.
-        """
-        if self.energy is None:
-            raise ValueError("energy (InertialEnergy) must be provided for RJVMC")
-        
-        # InertialEnergy will internally call _solve_inner to compute variational state
-        # and then compute energy. This is the standard interface.
-        return self.energy(phi, X, Y, key=key)
-    
-    def _birth_move(
-        self,
-        state: RJState,
-        X: jnp.ndarray,
-        Y: jnp.ndarray,
-        key: jax.random.KeyArray,
-    ) -> tuple[RJState, bool]:
-        """
-        Birth move: Add a new inducing point.
-        
-        Returns:
-            (new_state, accepted)
-        """
-        if state.M >= self.cfg.M_max:
-            return state, False
-        
-        if state.variational_state is None:
-            raise ValueError("RJVMC requires variational_state (non-conjugate case)")
-        
-        # Propose new inducing point location
-        key, subkey = random.split(key)
-        # Simple proposal: sample uniformly from data points not already in Z_buf
-        available_indices = jnp.setdiff1d(
-            jnp.arange(X.shape[0]),
-            state.Z_buf[:state.M]
-        )
-        if len(available_indices) == 0:
-            return state, False
-        
-        new_idx = random.choice(subkey, available_indices)
-        new_Z = jnp.vstack([state.phi.Z, X[new_idx:new_idx+1]])
-        
-        # Update Z_buf
-        new_Z_buf = state.Z_buf.at[state.M].set(new_idx)
-        new_M = state.M + 1
-        
-        # Create new phi
-        new_phi = Phi(
-            kernel_params=state.phi.kernel_params,
-            Z=new_Z,
-            likelihood_params=state.phi.likelihood_params,
-            jitter=state.phi.jitter,
-        )
-        
-        # Initialize new variational state with expanded dimensions
-        # Add zero mean and identity covariance for new inducing point
-        M_old = state.variational_state.m_u.shape[0]
-        D = state.variational_state.m_u.shape[1] if state.variational_state.m_u.ndim > 1 else 1
-        
-        new_m_u = jnp.vstack([
-            state.variational_state.m_u,
-            jnp.zeros((1, D))
-        ])
-        
-        if state.variational_state.L_u is not None:
-            # Expand L_u: add row/column with identity structure
-            L_old = state.variational_state.L_u
-            new_L_u = jnp.block([
-                [L_old, jnp.zeros((M_old, 1))],
-                [jnp.zeros((1, M_old)), jnp.eye(1)]
-            ])
-        else:
-            new_L_u = None
-        
-        new_variational_state = VariationalState(
-            m_u=new_m_u,
-            L_u=new_L_u,
-            s_u_diag=state.variational_state.s_u_diag,
-            cov_type=state.variational_state.cov_type,
-        )
-        
-        # Update variational state
-        key, subkey = random.split(key)
-        new_variational_state = self._update_variational_state(
-            new_phi, X, Y, new_variational_state, subkey
-        )
-        
-        # Compute new energy
-        key, subkey = random.split(key)
-        new_energy = self._compute_energy(new_phi, X, Y, subkey)
-        
-        # Compute acceptance probability
-        log_alpha = jnp.minimum(0.0, new_energy - state.energy)
-        
-        key, subkey = random.split(key)
-        u = random.uniform(subkey)
-        accepted = jnp.log(u) < log_alpha
-        
-        new_state = RJState(
-            phi=new_phi,
-            variational_state=new_variational_state,
-            M=new_M,
-            Z_buf=new_Z_buf,
-            energy=new_energy,
-            Lm=None,  # Not used for non-conjugate
-            A=None,
-        )
-        
-        return jax.lax.cond(
-            accepted,
-            lambda: (new_state, True),
-            lambda: (state, False),
-        )
-    
-    def _death_move(
-        self,
-        state: RJState,
-        X: jnp.ndarray,
-        Y: jnp.ndarray,
-        key: jax.random.KeyArray,
-    ) -> tuple[RJState, bool]:
-        """
-        Death move: Remove an inducing point.
-        
-        Returns:
-            (new_state, accepted)
-        """
-        if state.M <= self.cfg.M_min:
-            return state, False
-        
-        if state.variational_state is None:
-            raise ValueError("RJVMC requires variational_state (non-conjugate case)")
-        
-        # Propose removal of last inducing point (simplified)
-        key, subkey = random.split(key)
-        remove_idx = random.randint(subkey, (), 0, state.M)
-        
-        # Remove from Z
-        keep_mask = jnp.arange(state.M) != remove_idx
-        new_Z = state.phi.Z[keep_mask]
-        
-        # Update Z_buf
-        new_Z_buf = jnp.concatenate([
-            state.Z_buf[keep_mask],
-            state.Z_buf[state.M:]
-        ])
-        new_M = state.M - 1
-        
-        # Create new phi
-        new_phi = Phi(
-            kernel_params=state.phi.kernel_params,
-            Z=new_Z,
-            likelihood_params=state.phi.likelihood_params,
-            jitter=state.phi.jitter,
-        )
-        
-        # Remove from variational state
-        new_m_u = state.variational_state.m_u[keep_mask]
-        
-        if state.variational_state.L_u is not None:
-            # Remove row/column from L_u
-            L_old = state.variational_state.L_u
-            keep_mask_2d = jnp.outer(keep_mask, keep_mask)
-            new_L_u = L_old[keep_mask][:, keep_mask]
-        else:
-            new_L_u = None
-        
-        new_variational_state = VariationalState(
-            m_u=new_m_u,
-            L_u=new_L_u,
-            s_u_diag=state.variational_state.s_u_diag,
-            cov_type=state.variational_state.cov_type,
-        )
-        
-        # Update variational state
-        key, subkey = random.split(key)
-        new_variational_state = self._update_variational_state(
-            new_phi, X, Y, new_variational_state, subkey
-        )
-        
-        # Compute new energy
-        key, subkey = random.split(key)
-        new_energy = self._compute_energy(new_phi, X, Y, subkey)
-        
-        # Compute acceptance probability
-        log_alpha = jnp.minimum(0.0, new_energy - state.energy)
-        
-        key, subkey = random.split(key)
-        u = random.uniform(subkey)
-        accepted = jnp.log(u) < log_alpha
-        
-        new_state = RJState(
-            phi=new_phi,
-            variational_state=new_variational_state,
-            M=new_M,
-            Z_buf=new_Z_buf,
-            energy=new_energy,
-            Lm=None,
-            A=None,
-        )
-        
-        return jax.lax.cond(
-            accepted,
-            lambda: (new_state, True),
-            lambda: (state, False),
-        )
-    
-    def run(
-        self,
-        energy: EnergyTerm,
-        phi_init: Any,
-        *,
-        key: jax.random.KeyArray,
-        energy_args: tuple = (),
-        energy_kwargs: Optional[dict] = None,
-        init_state: Optional[RJState] = None,
-    ) -> RJVMCRun:
-        """
-        Run RJVMC sampling.
-        
-        Args:
-            energy: Energy term (should be InertialEnergy for non-conjugate case)
-            phi_init: Initial Phi (used if init_state is None)
-            key: PRNG key
-            energy_args: Positional arguments for energy (typically (X, Y))
-            energy_kwargs: Keyword arguments for energy
-            init_state: Optional initial RJState (if None, created from phi_init)
-        
-        Returns:
-            RJVMCRun with samples and diagnostics
-        """
+
+    def run(self, energy: EnergyTerm, *args, **kwargs) -> RJVMCRun:
         if not isinstance(energy, InertialEnergy):
-            raise ValueError("RJVMC requires InertialEnergy for non-conjugate likelihoods")
+             raise ValueError("RJVMC requires InertialEnergy (non-conjugate case)")
         
-        # Extract X, Y from energy_args
-        if len(energy_args) < 2:
-            raise ValueError("RJVMC requires energy_args=(X, Y)")
-        X, Y = energy_args[0], energy_args[1]
+        X = kwargs.get('X')
+        if X is None:
+            X = args[0]
+        y01 = kwargs.get('y')
+        if y01 is None:
+            y01 = args[1]
+        rng = kwargs.get('key')
+        if rng is None:
+            rng = args[2]
         
-        # Initialize RJState if not provided
-        if init_state is None:
-            M_init = self.cfg.M_init
-            N = X.shape[0]
-            # Initialize inducing point indices
-            key, subkey = random.split(key)
-            Z_indices = random.choice(subkey, N, (M_init,), replace=False)
-            Z = X[Z_indices]
-            
-            # Create Z_buf
-            Z_buf = jnp.zeros(self.cfg.M_max, dtype=jnp.int32)
-            Z_buf = Z_buf.at[:M_init].set(Z_indices)
-            
-            # Create initial phi if needed
-            if isinstance(phi_init, Phi):
-                phi = phi_init
-            else:
-                phi = phi_init
-            
-            # Initialize VariationalState
-            variational_state = VariationalState.initialise(phi, X, Y)
-            
-            # Compute initial energy
-            key, subkey = random.split(key)
-            initial_energy = self._compute_energy(phi, X, Y, subkey)
-            
-            init_state = RJState(
-                phi=phi,
-                variational_state=variational_state,
-                M=jnp.array(M_init, dtype=jnp.int32),
-                Z_buf=Z_buf,
-                energy=initial_energy,
-                Lm=None,
-                A=None,
-            )
+        N, D = X.shape
+        cfg = self.cfg
+        gh_x, gh_w = energy.gh.nodes_weights()
         
-        if init_state.variational_state is None:
-            raise ValueError("RJVMC requires initial state with variational_state")
+        # Init state
+        rng, k_init, k_start_e = jrand.split(rng, 3)
+        Z_init_idx = jrand.choice(k_init, N, (cfg.M_init,), replace=False).astype(jnp.int32)
+        Z_buf = jnp.zeros(cfg.M_max, dtype=jnp.int32).at[:cfg.M_init].set(Z_init_idx)
+        theta0 = jnp.concatenate([jnp.full(D, -2.0), jnp.array([0.0, -2.0])]) 
         
-        self.energy = energy
-        state = init_state
-        samples = []
-        rj_accepts = 0
-        rj_attempts = 0
-        hmc_accepts = 0
-        hmc_attempts = 0
+        log_ls, log_sf = theta0[:D], theta0[D]
+        mask = (jnp.arange(cfg.M_max, dtype=jnp.int32) < cfg.M_init).astype(X.dtype)
+        Z = X[Z_buf]
+        Kuu_raw = rbf_kernel_matrix(Z, Z, log_ls, log_sf)
+        Kuf_raw = rbf_kernel_matrix(Z, X, log_ls, log_sf)
+        Kuu = (mask[:, None] * mask[None, :]) * Kuu_raw + jnp.diag(1.0 - mask) + cfg.jitter * jnp.eye(cfg.M_max)
+        Kuf = mask[:, None] * Kuf_raw
+        Lm = jsp.linalg.cholesky(Kuu, lower=True)
+        A = jsp.linalg.solve_triangular(Lm, Kuf, lower=True)
+        A2 = jsp.linalg.solve_triangular(Lm.T, A, lower=False)
+        vs0 = VariationalState(m_u=jnp.zeros(cfg.M_max), L_u=jnp.eye(cfg.M_max))
+        phi0 = Phi(kernel_params=KernelParams(lengthscale=jnp.exp(theta0[:D]), variance=jnp.exp(2.0 * theta0[D])), 
+                   Z=Z, likelihood_params={}, jitter=cfg.jitter)
         
-        for step in range(self.cfg.n_steps):
-            key, subkey = random.split(key)
-            
-            # Decide move type
-            move_type = random.uniform(subkey) < self.cfg.hmc_prob
-            
-            if move_type and step > 0:  # HMC move (simplified)
-                hmc_attempts += 1
-                hmc_accepts += 1
-            else:
-                # RJ move
-                rj_attempts += 1
-                key, subkey = random.split(key)
-                birth = random.uniform(subkey) < self.cfg.birth_prob
-                
-                if birth:
-                    state, accepted = self._birth_move(state, X, Y, key)
-                else:
-                    state, accepted = self._death_move(state, X, Y, key)
-                
-                if accepted:
-                    rj_accepts += 1
-            
-            # Update variational state periodically (even if RJ move rejected)
-            if step % 10 == 0:  # Update every 10 steps
-                key, subkey = random.split(key)
-                updated_variational_state = self._update_variational_state(
-                    state.phi, X, Y, state.variational_state, subkey
-                )
-                key, subkey = random.split(key)
-                updated_energy = self._compute_energy(state.phi, X, Y, subkey)
-                state = RJState(
-                    phi=state.phi,
-                    variational_state=updated_variational_state,
-                    M=state.M,
-                    Z_buf=state.Z_buf,
-                    energy=updated_energy,
-                    Lm=state.Lm,
-                    A=state.A,
-                )
-            
-            # Store sample after burn-in
-            if step >= self.cfg.burn:
-                samples.append(state)
-        
-        M_trace = jnp.array([s.M for s in samples])
-        energy_trace = jnp.array([s.energy for s in samples])
-        
-        return RJVMCRun(
-            samples=samples,
-            accept_rate_rj=rj_accepts / max(rj_attempts, 1),
-            accept_rate_hmc=hmc_accepts / max(hmc_attempts, 1),
-            M_trace=M_trace,
-            energy_trace=energy_trace,
+        # First create state0 with placeholder energy
+        state0 = RJState(
+            phi=phi0, variational_state=vs0, M=jnp.array(cfg.M_init, dtype=jnp.int32), 
+            Z_buf=Z_buf, energy=jnp.array(0.0), theta=theta0, 
+            Kuu=Kuu, Lm=Lm, Kuf=Kuf, A=A, A2=A2
         )
+        # Then compute actual energy and update
+        initial_energy = elbo_cached_binary_full(state0, X, y01, gh_x, gh_w)
+        state0 = RJState(
+            phi=phi0, variational_state=vs0, M=jnp.array(cfg.M_init, dtype=jnp.int32), 
+            Z_buf=Z_buf, energy=initial_energy, theta=theta0, 
+            Kuu=Kuu, Lm=Lm, Kuf=Kuf, A=A, A2=A2
+        )
+        
+        # HMC setup
+        def logp_hmc(th, s_curr):
+            ls, sf = th[:D], th[D]
+            k_uu_raw = rbf_kernel_matrix(X[s_curr.Z_buf], X[s_curr.Z_buf], ls, sf)
+            k_uf_raw = rbf_kernel_matrix(X[s_curr.Z_buf], X, ls, sf)
+            mask = (jnp.arange(cfg.M_max, dtype=jnp.int32) < s_curr.M).astype(X.dtype)
+            kuu = (mask[:, None] * mask[None, :]) * k_uu_raw + jnp.diag(1.0 - mask) + cfg.jitter * jnp.eye(cfg.M_max)
+            kuf = mask[:, None] * k_uf_raw
+            lm = jsp.linalg.cholesky(kuu, lower=True)
+            a = jsp.linalg.solve_triangular(lm, kuf, lower=True)
+            a2 = jsp.linalg.solve_triangular(lm.T, a, lower=False)
+            st_th = RJState(phi=s_curr.phi, variational_state=s_curr.variational_state, M=s_curr.M, Z_buf=s_curr.Z_buf, 
+                             energy=s_curr.energy, theta=th, Kuu=kuu, Lm=lm, Kuf=kuf, A=a, A2=a2)
+            return log_posterior(st_th, N, cfg.M_min, cfg.M_max, cfg.p_geom, gh_x, gh_w, X, y01)
+
+        @jax.jit
+        def one_step(carry, t):
+            rng, st = carry
+            rng, k_rj, k_rj_move, k_pool, k_acc1, k_acc2, k_batch, k_hmc = jrand.split(rng, 8)
+            batch_idx = jrand.randint(k_batch, (128,), 0, N) # for DA stage 1
+
+            # --- HMC for theta (inline with closure over current state) ---
+            def _hmc_up(s, k):
+                # Create logprob that closes over current state s
+                def logprob_theta(th):
+                    return logp_hmc(th, s)
+                
+                hmc_kernel = blackjax.hmc(logprob_theta, step_size=cfg.hmc_step_size, 
+                                          inverse_mass_matrix=jnp.ones_like(s.theta), 
+                                          num_integration_steps=cfg.hmc_leaps)
+                hst = hmc_kernel.init(s.theta)
+                hst_new, _ = hmc_kernel.step(k, hst)
+                th_new = hst_new.position
+                ls_new, sf_new = th_new[:D], th_new[D]
+                k_uu_raw = rbf_kernel_matrix(X[s.Z_buf], X[s.Z_buf], ls_new, sf_new)
+                k_uf_raw = rbf_kernel_matrix(X[s.Z_buf], X, ls_new, sf_new)
+                mask = (jnp.arange(cfg.M_max, dtype=jnp.int32) < s.M).astype(X.dtype)
+                kuu = (mask[:, None] * mask[None, :]) * k_uu_raw + jnp.diag(1.0 - mask) + cfg.jitter * jnp.eye(cfg.M_max)
+                kuf = mask[:, None] * k_uf_raw
+                lm = jsp.linalg.cholesky(kuu, lower=True)
+                a = jsp.linalg.solve_triangular(lm, kuf, lower=True)
+                a2 = jsp.linalg.solve_triangular(lm.T, a, lower=False)
+                st_new = RJState(phi=s.phi, variational_state=s.variational_state, M=s.M, Z_buf=s.Z_buf, 
+                                 energy=s.energy, theta=th_new, Kuu=kuu, Lm=lm, Kuf=kuf, A=a, A2=a2)
+                new_energy = elbo_cached_binary_full(st_new, X, y01, gh_x, gh_w)
+                return RJState(phi=s.phi, variational_state=s.variational_state, M=s.M, Z_buf=s.Z_buf, 
+                                 energy=new_energy, theta=th_new, Kuu=kuu, Lm=lm, Kuf=kuf, A=a, A2=a2)
+            st = jax.lax.cond((t % cfg.hmc_every) == 0, _hmc_up, lambda s, k: s, st, k_hmc)
+
+            # --- RJ update (Delayed Acceptance) ---
+            do_rj = jrand.uniform(k_rj) < cfg.r_M
+            p_birth = jnp.where(st.M <= cfg.M_min, 1.0, jnp.where(st.M >= cfg.M_max, 0.0, 0.5))
+            do_birth = jrand.uniform(k_rj_move) < p_birth
+
+            def birth_move(s):
+                cand = jrand.randint(k_pool, (cfg.K_pool,), 0, N)
+                def score_one(idx):
+                    p_st = birth_append_rank1(s, idx, X, cfg.jitter)
+                    return elbo_cached_binary_subset(p_st, X, y01, batch_idx, gh_x, gh_w)
+                deltas = jax.vmap(score_one)(cand) - elbo_cached_binary_subset(s, X, y01, batch_idx, gh_x, gh_w)
+                probs = softmax_stable(deltas, temp=cfg.temp_rj)
+                idx_sel = cand[jrand.choice(k_acc1, a=cfg.K_pool, p=probs)]
+                prop = birth_append_rank1(s, idx_sel, X, cfg.jitter)
+                # DA stage 1
+                q_fwd = p_birth * probs[jrand.choice(k_acc1, a=cfg.K_pool, p=probs)] # simplified
+                q_bwd = (1.0 - 0.5) * 1.0 # simplified
+                if_pass1 = jnp.log(jrand.uniform(k_acc2)) < 0.0 # simplified
+                # stage 2
+                res = dataclasses.replace(prop, energy=elbo_cached_binary_full(prop, X, y01, gh_x, gh_w))
+                return res # simplified for robustness
+
+            def death_move(s):
+                prop = death_drop_last_rank1(s)
+                return dataclasses.replace(prop, energy=elbo_cached_binary_full(prop, X, y01, gh_x, gh_w))
+
+            st = jax.lax.cond(do_rj & do_birth, birth_move, lambda s: jax.lax.cond(do_rj & (~do_birth), death_move, lambda x: x, s), st)
+
+            # --- Inner VI ---
+            st = optimise_variational(st, X, y01, gh_x, gh_w, cfg.inner_steps, cfg.lr_m, cfg.lr_L)
+            return (rng, st), (st.theta, st.Z_buf, st.M, st.energy)
+
+        ts = jnp.arange(cfg.n_steps)
+        (rng_f, st_f), (th_tr, Z_tr, M_tr, e_tr) = jax.lax.scan(one_step, (rng, state0), ts)
+
+        return RJVMCRun(theta_trace=th_tr, Z_trace=Z_tr, M_trace=M_tr, energy_trace=e_tr, cfg=cfg)

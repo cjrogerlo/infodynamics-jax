@@ -1,4 +1,4 @@
-# infodynamics_jax/likelihoods/base.py
+# infodynamics_jax/gp/likelihoods/base.py
 
 _LIKELIHOOD_REGISTRY = {}
 

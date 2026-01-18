@@ -154,7 +154,9 @@ class SparsifiedKernel:
 
         if self.residual.lower() == "fitc":
             # Only compute diagonal of K_xx (don't materialise full matrix)
-            K_xx_diag = jnp.diag(self.kernel_fn(X, X, params))  # (N,)
+            # Use optimized diagonal computation (for RBF and other stationary kernels,
+            # this avoids computing the full N×N matrix)
+            K_xx_diag = _kernel_diag(self.kernel_fn, X, params)  # (N,)
             diag_Q = diag_Q_ff(K_xz, K_zz, jitter=jitter)  # (N,) - more efficient
             r_diag = residual_func(K_xx_diag, diag_Q)  # (N,)
             R = jnp.diag(r_diag)  # (N, N)
@@ -191,7 +193,7 @@ def _kernel_diag(kernel_fn, X, params):
     return jnp.diag(kernel_fn(X, X, params))
 
 
-def fitc_log_evidence(
+def fitc_log_evidence_components(
     kernel_fn,
     params,
     X,
@@ -203,9 +205,25 @@ def fitc_log_evidence(
     kernel_diag_fn=None,
 ):
     """
-    FITC log marginal likelihood using Woodbury form.
+    FITC log marginal likelihood components (data-fit, complexity, constant).
 
-    This mirrors the standard FITC computation without materialising N x N.
+    Returns the decomposed energy terms:
+    - data_fit: -0.5 * quad (quadratic form)
+    - complexity: -0.5 * logdet (log determinant)
+    - constant: -0.5 * const (normalization constant)
+
+    Args:
+        kernel_fn: Kernel function
+        params: Kernel parameters
+        X: (N, Q) input locations
+        y: (N,) target values
+        Z: (M, Q) inducing locations
+        noise_var: Noise variance
+        jitter: Numerical stability jitter
+        kernel_diag_fn: Optional function to compute kernel diagonal
+
+    Returns:
+        Tuple of (data_fit, complexity, constant) energy components
     """
     if y.ndim == 2:
         y = y.squeeze(-1)
@@ -239,7 +257,35 @@ def fitc_log_evidence(
     quad = jnp.dot(b, b) - jnp.dot(c, Ab)
     logdet = jnp.sum(jnp.log(d)) + 2.0 * jnp.sum(jnp.log(jnp.diag(Lb)))
     const = N * jnp.log(2.0 * jnp.pi)
-    return -0.5 * (quad + logdet + const)
+    
+    data_fit = -0.5 * quad
+    complexity = -0.5 * logdet
+    constant = -0.5 * const
+    
+    return data_fit, complexity, constant
+
+
+def fitc_log_evidence(
+    kernel_fn,
+    params,
+    X,
+    y,
+    Z,
+    *,
+    noise_var,
+    jitter: float = 1e-8,
+    kernel_diag_fn=None,
+):
+    """
+    FITC log marginal likelihood using Woodbury form.
+
+    This mirrors the standard FITC computation without materialising N x N.
+    """
+    data_fit, complexity, constant = fitc_log_evidence_components(
+        kernel_fn, params, X, y, Z,
+        noise_var=noise_var, jitter=jitter, kernel_diag_fn=kernel_diag_fn
+    )
+    return data_fit + complexity + constant
 
 
 # ============================================================================
@@ -258,4 +304,5 @@ __all__ = [
     "SparsifiedKernel",
     # FITC evidence
     "fitc_log_evidence",
+    "fitc_log_evidence_components",
 ]

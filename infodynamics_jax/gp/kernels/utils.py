@@ -1,4 +1,4 @@
-# infodynamics_jax/kernels/utils.py
+# infodynamics_jax/gp/kernels/utils.py
 import jax.numpy as jnp
 
 def scaled_sqdist(X, Z, lengthscale):

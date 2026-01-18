@@ -1,4 +1,4 @@
-# infodynamics_jax/kernels/composite.py
+# infodynamics_jax/gp/kernels/composite.py
 def sum_kernel(k1, k2):
     def k(X, Z, params):
         return k1(X, Z, params) + k2(X, Z, params)

@@ -1,4 +1,4 @@
-# infodynamics_jax/kernels/white.py
+# infodynamics_jax/gp/kernels/white.py
 import jax.numpy as jnp
 from .params import KernelParams
 

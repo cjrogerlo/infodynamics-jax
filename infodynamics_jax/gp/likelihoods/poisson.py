@@ -1,3 +1,4 @@
+# infodynamics_jax/gp/likelihoods/poisson.py
 import jax.numpy as jnp
 import jax.scipy.special as jsp
 

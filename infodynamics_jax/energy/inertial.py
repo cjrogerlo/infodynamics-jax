@@ -1,4 +1,11 @@
 # infodynamics_jax/energy/inertial.py
+"""
+Inertial (data-dependent) energy for Gaussian Process models.
+
+This module provides InertialEnergy, which computes the expected negative
+log-likelihood under the variational posterior q(f|phi). Supports both
+conjugate (Gaussian) and non-conjugate likelihoods via different estimators.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -1,4 +1,4 @@
-# infodynamics_jax/kernels/rbf.py
+# infodynamics_jax/gp/kernels/rbf.py
 import jax.numpy as jnp
 from .params import KernelParams
 from .utils import scaled_sqdist

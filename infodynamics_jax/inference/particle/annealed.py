@@ -67,6 +67,9 @@ class SMCRun:
     ess_trace: jnp.ndarray  # shape [n_steps]
     logZ_est: float
     betas: jnp.ndarray  # shape [n_steps+1]
+    # New diagnostics
+    kl_trace: Optional[jnp.ndarray] = None  # shape [n_steps]
+    accept_trace: Optional[jnp.ndarray] = None  # shape [n_steps]
 
     @property
     def beta_trace(self) -> jnp.ndarray:
@@ -197,10 +200,16 @@ class AnnealedSMC(InferenceMethod):
             # Incremental normalizer = log sum_i (w_{t-1,i} * exp(delta_logw_i))
             # This accounts for the weighted average of incremental weights
             # This is the standard AIS/SMC evidence estimator
-            weighted_delta_logw = delta_logw + jnp.log(w_prev_norm + 1e-10)  # Add small epsilon for numerical stability
+            weighted_delta_logw = delta_logw + jnp.log(w_prev_norm + 1e-10)
             max_weighted_delta = jnp.max(weighted_delta_logw)
             logZ_increment = max_weighted_delta + jnp.log(jnp.sum(jnp.exp(weighted_delta_logw - max_weighted_delta)))
             logZ_est = logZ_est + logZ_increment
+
+            # KL Divergence: D_KL(pi_{t-1} || pi_t) = E_{pi_{t-1}}[log (pi_{t-1}/pi_t)]
+            # log (pi_{t-1}/pi_t) = delta_beta * E(phi) + log(Z_t/Z_{t-1})
+            # E_{pi_{t-1}}[E(phi)] = sum_i w_{prev,i} * E_i
+            expected_energy = jnp.sum(w_prev_norm * energies)
+            kl = delta_beta * expected_energy + logZ_increment
 
             # Resample if ESS < threshold
             def resample_particles(particles, logw, key):
@@ -219,11 +228,11 @@ class AnnealedSMC(InferenceMethod):
             )
 
             # Rejuvenation step
+            accept_prob = jnp.array(0.0)
             if rejuvenation == "hmc":
-                # Target tempered distribution: U_beta = beta * E(phi)
                 def energy_fn(phi):
                     return beta_curr * energy(phi, *energy_args, **energy_kwargs)
-                particles = hmc_rejuvenate(
+                particles, accept_probs = hmc_rejuvenate(
                     key_rejuv,
                     particles,
                     energy_fn,
@@ -232,11 +241,11 @@ class AnnealedSMC(InferenceMethod):
                     n_steps=cfg.rejuvenation_steps,
                     jit=jit,
                 )
+                accept_prob = jnp.mean(accept_probs)
             elif rejuvenation == "mala":
-                # Target tempered distribution: U_beta = beta * E(phi)
                 def energy_fn(phi):
                     return beta_curr * energy(phi, *energy_args, **energy_kwargs)
-                particles = mala_rejuvenate(
+                particles, accept_probs = mala_rejuvenate(
                     key_rejuv,
                     particles,
                     energy_fn,
@@ -244,11 +253,11 @@ class AnnealedSMC(InferenceMethod):
                     n_steps=cfg.rejuvenation_steps,
                     jit=jit,
                 )
+                accept_prob = jnp.mean(accept_probs)
             elif rejuvenation == "nuts":
-                # Target tempered distribution: U_beta = beta * E(phi)
                 def energy_fn(phi):
                     return beta_curr * energy(phi, *energy_args, **energy_kwargs)
-                particles = nuts_rejuvenate(
+                particles, accept_probs = nuts_rejuvenate(
                     key_rejuv,
                     particles,
                     energy_fn,
@@ -258,8 +267,9 @@ class AnnealedSMC(InferenceMethod):
                     n_steps=cfg.rejuvenation_steps,
                     jit=jit,
                 )
+                accept_prob = jnp.mean(accept_probs)
 
-            return (particles, logw, logZ_est, key), ess_trace
+            return (particles, logw, logZ_est, key), (ess_trace, kl, accept_prob)
 
         def iter_steps():
             if not cfg.verbose:
@@ -271,15 +281,21 @@ class AnnealedSMC(InferenceMethod):
                 return range(n_steps)
 
         if jit:
-            (particles, logw, logZ_est, _), ess_trace = lax.scan(
+            (particles, logw, logZ_est, _), (ess_trace, kl_trace, accept_trace) = lax.scan(
                 step_fn, (particles, logw, logZ_est, key), jnp.arange(n_steps)
             )
         else:
             ess_trace_list = []
+            kl_trace_list = []
+            accept_trace_list = []
             for t in iter_steps():
-                (particles, logw, logZ_est, key), ess_t = step_fn((particles, logw, logZ_est, key), t)
+                (particles, logw, logZ_est, key), (ess_t, kl_t, accept_t) = step_fn((particles, logw, logZ_est, key), t)
                 ess_trace_list.append(ess_t)
+                kl_trace_list.append(kl_t)
+                accept_trace_list.append(accept_t)
             ess_trace = jnp.array(ess_trace_list)
+            kl_trace = jnp.array(kl_trace_list)
+            accept_trace = jnp.array(accept_trace_list)
 
         return SMCRun(
             particles=particles,
@@ -287,5 +303,7 @@ class AnnealedSMC(InferenceMethod):
             ess_trace=ess_trace,
             logZ_est=logZ_est,
             betas=betas,
+            kl_trace=kl_trace,
+            accept_trace=accept_trace,
         )
         

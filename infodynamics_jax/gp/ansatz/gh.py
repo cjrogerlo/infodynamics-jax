@@ -1,4 +1,4 @@
-# infodynamics_jax/energy/gh.py
+# infodynamics_jax/gp/ansatz/gh.py
 from __future__ import annotations
 import jax.numpy as jnp
 from dataclasses import dataclass
