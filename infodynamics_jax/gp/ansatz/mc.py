@@ -60,7 +60,7 @@ class MonteCarlo:
             Mean of q(f)
         var : scalar or (D,)
             Variance of q(f) (>= 0)
-        phi : Phi
+        phi : Upphi
             Structural parameters
         nll_1d_fn : callable
             Signature: nll_1d_fn(y, f, phi.likelihood_params) -> scalar
@@ -117,7 +117,7 @@ class MonteCarlo:
         
         Parameters
         ----------
-        phi : Phi
+        phi : Upphi
             Structural parameters
         X : (N, Q)
             Input locations

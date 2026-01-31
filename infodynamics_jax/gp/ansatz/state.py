@@ -23,7 +23,7 @@ class VariationalState:
         
         Parameters
         ----------
-        phi : Phi
+        phi : Upphi
             Structural parameters containing inducing points Z
         X : jnp.ndarray
             Input data (N, Q)

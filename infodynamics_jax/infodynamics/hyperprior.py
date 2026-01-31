@@ -23,10 +23,10 @@ from typing import Optional, Dict, Any, Callable
 
 import jax.numpy as jnp
 
-from ..core.phi import Phi
+from ..core.upphi import Upphi
 
 
-def kernel_l2_hyperprior(phi: Phi, fields: Optional[list[str]] = None, lam: float = 1.0) -> jnp.ndarray:
+def kernel_l2_hyperprior(phi: Upphi, fields: Optional[list[str]] = None, lam: float = 1.0) -> jnp.ndarray:
     """
     L2 hyperprior on kernel parameters.
     
@@ -54,7 +54,7 @@ def kernel_l2_hyperprior(phi: Phi, fields: Optional[list[str]] = None, lam: floa
     return 0.5 * lam * total
 
 
-def kernel_log_l2_hyperprior(phi: Phi, fields: Optional[list[str]] = None, 
+def kernel_log_l2_hyperprior(phi: Upphi, fields: Optional[list[str]] = None, 
                               lam: float = 1.0, mu: Optional[Dict[str, float]] = None) -> jnp.ndarray:
     """
     L2 hyperprior on log kernel parameters (log-normal prior).
@@ -90,7 +90,7 @@ def kernel_log_l2_hyperprior(phi: Phi, fields: Optional[list[str]] = None,
     return 0.5 * lam * total
 
 
-def z_l2_hyperprior(phi: Phi, lam: float = 1.0) -> jnp.ndarray:
+def z_l2_hyperprior(phi: Upphi, lam: float = 1.0) -> jnp.ndarray:
     """
     L2 hyperprior on inducing point locations.
     
@@ -106,7 +106,7 @@ def z_l2_hyperprior(phi: Phi, lam: float = 1.0) -> jnp.ndarray:
     return 0.5 * lam * jnp.sum(phi.Z ** 2)
 
 
-def likelihood_l2_hyperprior(phi: Phi, keys: Optional[list[str]] = None, 
+def likelihood_l2_hyperprior(phi: Upphi, keys: Optional[list[str]] = None, 
                              lam: float = 1.0) -> jnp.ndarray:
     """
     L2 hyperprior on likelihood parameters.
@@ -138,7 +138,7 @@ def likelihood_l2_hyperprior(phi: Phi, keys: Optional[list[str]] = None,
     return 0.5 * lam * total
 
 
-def likelihood_log_l2_hyperprior(phi: Phi, keys: Optional[list[str]] = None,
+def likelihood_log_l2_hyperprior(phi: Upphi, keys: Optional[list[str]] = None,
                                  lam: float = 1.0, mu: Optional[Dict[str, float]] = None) -> jnp.ndarray:
     """
     L2 hyperprior on log likelihood parameters (log-normal prior).
@@ -185,7 +185,7 @@ def make_hyperprior(kernel_fields: Optional[list[str]] = None,
                     likelihood_keys: Optional[list[str]] = None,
                     likelihood_lambda: float = 0.0,
                     likelihood_log_lambda: float = 0.0,
-                    likelihood_log_mu: Optional[Dict[str, float]] = None) -> Callable[[Phi, Any, Any, Any], jnp.ndarray]:
+                    likelihood_log_mu: Optional[Dict[str, float]] = None) -> Callable[[Upphi, Any, Any, Any], jnp.ndarray]:
     """
     Factory function to create a hyperprior function.
     
@@ -221,7 +221,7 @@ def make_hyperprior(kernel_fields: Optional[list[str]] = None,
         ...     extra=[hyperprior],  # Add as extra term
         ... )
     """
-    def hyperprior_fn(phi: Phi, X: Any = None, Y: Any = None, key: Any = None) -> jnp.ndarray:
+    def hyperprior_fn(phi: Upphi, X: Any = None, Y: Any = None, key: Any = None) -> jnp.ndarray:
         E = jnp.array(0.0)
         
         if kernel_lambda > 0.0:

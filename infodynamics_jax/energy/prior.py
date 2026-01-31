@@ -102,7 +102,10 @@ class PriorCFG:
     block_split: Optional[int] = None
 
     # Across-Q hierarchical / sparsity priors
-    hier_ard_lambda: float = 0.0
+    # hier_ard_lambda: Typical range 0.1 - 2.0.
+    # WARNING: If x_l2_lambda is much larger (e.g. 1.0) than hier_ard_lambda (e.g. 0.005),
+    # the isotropic shrinkage will drown out the ARD ordering effect.
+    hier_ard_lambda: float = 1.0
     hier_ard_mode: str = "exp"  # "exp" or "poly"
     hier_ard_gamma: float = 0.9  # for exp mode
     hier_ard_power: float = 1.5  # for poly mode
@@ -564,6 +567,10 @@ def hierarchical_ard_prior(X, lam: float, mode: str = "exp", gamma: float = 0.9,
     Creates a semantic coordinate system where:
     - Early dimensions (q=1,2,...) = cheap → tend to carry global/main structure
     - Later dimensions (q=Q-1,Q) = expensive → only used when necessary (details/residuals)
+
+    WARNING: If an isotropic L2 prior (e.g. x_l2_lambda=1.0) is much stronger than 
+    this ARD prior (e.g. hier_ard_lambda=0.005), the uniform shrinkage will 
+    overwhelm the ordering effect, resulting in near-uniform variances.
 
     E_hier(X) = (λ/2) * Σ_q w_q ||X_{·q}||^2
 

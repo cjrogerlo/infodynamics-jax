@@ -2,7 +2,7 @@
 """
 RJ-MCMC State for Sparse Bayesian GP with Conjugate and Non-Conjugate Likelihoods.
 
-This module defines RJState, which extends the library's Phi and VariationalState
+This module defines RJState, which extends the library's Upphi and VariationalState
 concepts for transdimensional MCMC sampling.
 
 For conjugate likelihoods (Gaussian):
@@ -20,7 +20,7 @@ import jax.numpy as jnp
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
 
-from infodynamics_jax.core import Phi
+from infodynamics_jax.core import Upphi
 from infodynamics_jax.gp.ansatz.state import VariationalState
 
 
@@ -31,12 +31,12 @@ class RJState:
     RJ-MCMC state for sparse Bayesian GP with conjugate and non-conjugate likelihoods.
 
     This integrates:
-    1. Library's Phi (structural parameters)
+    1. Library's Upphi (structural parameters)
     2. Library's VariationalState (q(u) posterior) - for non-conjugate case
     3. RJ-MCMC specific components (dynamic M, cached matrices)
 
     Attributes:
-        phi: Library's Phi (kernel_params, Z, likelihood_params, jitter)
+        phi: Library's Upphi (kernel_params, Z, likelihood_params, jitter)
         variational_state: Library's VariationalState (m_u, L_u or s_u_diag)
                           Required for non-conjugate, None for conjugate
         M: Current number of active inducing points (scalar int32)
@@ -54,7 +54,7 @@ class RJState:
         A: Optional K_ZZ^{-1} K_ZX (M_max, N)
     """
 
-    phi: Phi                        # Library's Phi
+    phi: Upphi                        # Library's Upphi
     variational_state: Optional[VariationalState] = None  # For non-conjugate only
     M: jnp.ndarray = None           # () int32
     Z_buf: jnp.ndarray = None       # (M_max,) int32

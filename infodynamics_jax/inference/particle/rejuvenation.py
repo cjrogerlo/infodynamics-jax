@@ -26,6 +26,8 @@ from jax import lax, random
 from jax.tree_util import tree_map, tree_leaves, tree_flatten
 
 
+
+
 def kinetic_energy(p):
     """Compute kinetic energy: K(p) = 0.5 * ||p||^2"""
     sq_sum = 0.0
@@ -163,6 +165,8 @@ def mala_rejuvenate(
     step_size: float = 1e-2,
     n_steps: int = 1,
     jit: bool = True,
+    drift_transform: Callable[[Any, Any, float], Any] = None,  # optional: g -> (I - C) g
+    beta: float = 1.0,
 ) -> Any:
     """
     MALA (Metropolis-Adjusted Langevin Algorithm) rejuvenation kernel.
@@ -180,6 +184,11 @@ def mala_rejuvenate(
         step_size: MALA step size
         n_steps: Number of MALA steps per particle
         jit: Whether to use JIT-compiled scan (faster but less flexible)
+        drift_transform: Optional callable (q, grad_q, beta) -> modified_grad.
+            Use this to inject solenoidal/circulation terms (Regime-1) without
+            changing the energy. Defaults to identity (no curl). For drift = -g + Cg,
+            pass modified_grad = g - Cg.
+        beta: Scalar annealing parameter, forwarded to drift_transform.
     
     Returns:
         rejuvenated_particles: pytree stacked [P, ...]
@@ -191,10 +200,14 @@ def mala_rejuvenate(
     """
     grad_U = jax.grad(energy_fn)
 
-    def compute_proposal_log_prob(q_from, q_to, grad_U_from, step_size):
+    if drift_transform is None:
+        def drift_transform(q, g, beta):
+            return g
+
+    def compute_proposal_log_prob(q_from, q_to, grad_drift_from, step_size):
         """Compute log probability of proposing q_to from q_from."""
-        # Mean of proposal distribution: q_mean = q_from - (step_size/2) * grad_U_from
-        q_mean = tree_map(lambda q, g: q - 0.5 * step_size * g, q_from, grad_U_from)
+        # Mean of proposal distribution: q_mean = q_from - (step_size/2) * grad_drift_from
+        q_mean = tree_map(lambda q, g: q - 0.5 * step_size * g, q_from, grad_drift_from)
         # Difference: q_to - q_mean
         q_diff = tree_map(lambda a, b: a - b, q_to, q_mean)
         # Log probability: -0.5 * ||q_to - q_mean||^2 / step_size
@@ -209,23 +222,25 @@ def mala_rejuvenate(
         
         # Compute gradient at current position
         grad_U_current = grad_U(q)
+        grad_drift_current = drift_transform(q, grad_U_current, beta)
         current_U = energy_fn(q)
         
         # Propose new state using Langevin dynamics:
-        # q_proposed = q_current - (step_size / 2) * grad_U + sqrt(step_size) * noise
+        # q_proposed = q_current - (step_size / 2) * grad + sqrt(step_size) * noise
         noise = tree_map(lambda x: random.normal(subkey1, x.shape, dtype=x.dtype), q)
         q_proposed = tree_map(
             lambda q, g, n: q - 0.5 * step_size * g + jnp.sqrt(step_size) * n,
-            q, grad_U_current, noise
+            q, grad_drift_current, noise
         )
         
         # Compute energy and gradient at proposed state
         proposed_U = energy_fn(q_proposed)
         grad_U_proposed = grad_U(q_proposed)
+        grad_drift_proposed = drift_transform(q_proposed, grad_U_proposed, beta)
         
         # Compute proposal probabilities (symmetric Gaussian proposals)
-        log_q_forward = compute_proposal_log_prob(q, q_proposed, grad_U_current, step_size)
-        log_q_backward = compute_proposal_log_prob(q_proposed, q, grad_U_proposed, step_size)
+        log_q_forward = compute_proposal_log_prob(q, q_proposed, grad_drift_current, step_size)
+        log_q_backward = compute_proposal_log_prob(q_proposed, q, grad_drift_proposed, step_size)
         
         # Metropolis acceptance ratio
         log_accept_ratio = (

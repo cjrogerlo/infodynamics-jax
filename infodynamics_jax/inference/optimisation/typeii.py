@@ -38,7 +38,7 @@ from jax.tree_util import tree_map, tree_leaves
 
 from ...energy.base import EnergyTerm
 from ..base import InferenceMethod
-from ...core.phi import Phi
+from ...core.upphi import Upphi
 from ...gp.kernels.params import KernelParams
 
 
@@ -128,7 +128,7 @@ class TypeII(InferenceMethod):
         else:
             raise ValueError(f"Unknown optimizer: {self.cfg.optimizer}")
 
-    def _apply_constraints(self, phi: Phi) -> Phi:
+    def _apply_constraints(self, phi: Upphi) -> Upphi:
         """
         Apply parameter constraints to ensure positive values.
         
@@ -168,7 +168,7 @@ class TypeII(InferenceMethod):
             for key, value in phi.likelihood_params.items()
         }
         
-        return Phi(
+        return Upphi(
             kernel_params=kernel_params,
             Z=phi.Z,
             likelihood_params=likelihood_params,

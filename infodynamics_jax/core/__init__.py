@@ -1,10 +1,10 @@
 # infodynamics_jax/core/__init__.py
 from .data import SupervisedData, SupervisedDataset, LatentData
-from .phi import Phi
+from .upphi import Upphi
 
 __all__ = [
     "SupervisedData",
     "SupervisedDataset",
     "LatentData",
-    "Phi",
+    "Upphi",
 ]

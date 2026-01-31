@@ -16,7 +16,7 @@ Rationale:
   - keeps model components (kernels, likelihoods, sparsified operators) reusable across inference paradigms,
   - makes it possible to compare dynamics under the same energy landscape,
   - supports variable-dimension structure (e.g. RJ moves) without contaminating
-    the structural state container (core.phi.Phi).
+    the structural state container (core.phi.Upphi).
 """
 
 from .base import InferenceMethod
@@ -40,6 +40,7 @@ from .rj import (
     RJMCMC, RJMCMCCFG, RJMCMCRun,
     RJVMC, RJVMCCFG, RJVMCRun,
 )
+from .noise import alpha_stable_noise, levy_noise
 
 __all__ = [
     "InferenceMethod",
@@ -55,4 +56,5 @@ __all__ = [
     "RJState",
     "RJMCMC", "RJMCMCCFG", "RJMCMCRun",
     "RJVMC", "RJVMCCFG", "RJVMCRun",
+    "alpha_stable_noise", "levy_noise",
 ]

@@ -20,7 +20,7 @@ import optax
 
 from ...energy.base import EnergyTerm
 from ...energy.inertial import InertialEnergy
-from ...core import Phi
+from ...core import Upphi
 from ...gp.kernels.params import KernelParams
 from ...gp.ansatz.state import VariationalState
 from ..base import InferenceMethod
@@ -402,7 +402,7 @@ class RJVMC(InferenceMethod):
         A = jsp.linalg.solve_triangular(Lm, Kuf, lower=True)
         A2 = jsp.linalg.solve_triangular(Lm.T, A, lower=False)
         vs0 = VariationalState(m_u=jnp.zeros(cfg.M_max), L_u=jnp.eye(cfg.M_max))
-        phi0 = Phi(kernel_params=KernelParams(lengthscale=jnp.exp(theta0[:D]), variance=jnp.exp(2.0 * theta0[D])), 
+        phi0 = Upphi(kernel_params=KernelParams(lengthscale=jnp.exp(theta0[:D]), variance=jnp.exp(2.0 * theta0[D])), 
                    Z=Z, likelihood_params={}, jitter=cfg.jitter)
         
         # First create state0 with placeholder energy

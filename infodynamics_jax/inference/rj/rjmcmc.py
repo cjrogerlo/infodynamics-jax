@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from jax import random as jrand
 
-from ...core import Phi
+from ...core import Upphi
 from ...gp.kernels.params import KernelParams
 from .state import RJState
 
@@ -132,11 +132,14 @@ def build_full_state(
     
     elbo = compute_elbo_from_cache(N, sn2, sf2, y2, logdetB, vnorm2, sumA2)
     
-    phi = Phi(
+    # Ensure jitter has same dtype as input data to avoid type mismatch in jax.lax.cond
+    jitter_dtype = jnp.array(jitter, dtype=X.dtype)
+    
+    phi = Upphi(
         kernel_params=kernel_params,
         Z=Z_full,
         likelihood_params={"noise_var": sn2},
-        jitter=jitter
+        jitter=jitter_dtype
     )
     
     return RJState(
@@ -291,7 +294,7 @@ def birth_rank1_update(
     Z_buf_new = state.Z_buf.at[slot].set(new_idx.astype(jnp.int32))
     M_new = (M + jnp.array(1, dtype=jnp.int32)).astype(jnp.int32)
     
-    phi_new = Phi(
+    phi_new = Upphi(
         kernel_params=state.phi.kernel_params,
         Z=X[Z_buf_new],
         likelihood_params=state.phi.likelihood_params,
@@ -367,7 +370,7 @@ def death_drop_last(
     elbo_new = compute_elbo_from_cache(N, sn2, sf2, y2, logdetB_new, vnorm2_new, sumA2_new)
     M_new = (M - jnp.array(1, dtype=jnp.int32)).astype(jnp.int32)
     
-    phi_new = Phi(
+    phi_new = Upphi(
         kernel_params=state.phi.kernel_params,
         Z=X[state.Z_buf],
         likelihood_params=state.phi.likelihood_params,
@@ -625,9 +628,17 @@ def hmc_update_theta(
         raise ImportError("blackjax is required for HMC updates. Install with: pip install blackjax")
     
     N, D = X.shape
+    
+    # Ensure jitter has same dtype as state to avoid type mismatch
+    # Use state.phi.jitter's dtype if it's a JAX array, otherwise use X's dtype
+    if hasattr(state.phi.jitter, 'dtype'):
+        jitter_dtype = state.phi.jitter.dtype
+    else:
+        jitter_dtype = X.dtype
+    jitter_typed = jnp.array(jitter, dtype=jitter_dtype)
 
     def logprob(theta):
-        st = build_full_state(theta, state.Z_buf, state.M, X, y, kernel_fn=kernel_fn, jitter=jitter)
+        st = build_full_state(theta, state.Z_buf, state.M, X, y, kernel_fn=kernel_fn, jitter=jitter_typed)
         return log_posterior(st, N, M_min, M_max, p_geom=p_geom)
 
     hmc = blackjax.hmc(
@@ -639,7 +650,7 @@ def hmc_update_theta(
     s0 = hmc.init(state.theta)
     s1, _ = hmc.step(key, s0)
     theta_new = s1.position
-    return build_full_state(theta_new, state.Z_buf, state.M, X, y, kernel_fn=kernel_fn, jitter=jitter)
+    return build_full_state(theta_new, state.Z_buf, state.M, X, y, kernel_fn=kernel_fn, jitter=jitter_typed)
 
 
 # ============================================================

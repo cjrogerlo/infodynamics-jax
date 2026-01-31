@@ -38,7 +38,7 @@ def predict_typeii(
     
     Parameters
     ----------
-    phi : Phi
+    phi : Upphi
         Structural parameters (from type-II optimisation)
     X_test : (N_test, Q)
         Test input locations
